@@ -61,26 +61,23 @@
     (display (explain-resolved r) out))
   (resolved-ok? r))
 
-;; Consumer development loop: run a consumer (e.g. a renderer under
-;; construction) against a recording view, print what it read, what it hit
-;; unfilled, and what it never touched; return the consumer's result and the
-;; .rktd-shaped report.
+;; Consumer development loop: consume/record (the production loop) plus a
+;; printout of what was read, hit unfilled, marked, flagged, and never
+;; touched — everything printed straight from the report it returns.
 (define (debug-consume c proc
                        #:function [function 'debug-consume]
                        #:out [out (current-output-port)])
-  (define r (->resolved c))
-  (define-values (src rec) (make-recording-source r))
-  (define result (proc src))
-  (fprintf out "―― ~a\n读集: ~a\n" function (record-reads rec))
-  (define u (record-unfilled rec))
-  (unless (hash-empty? u)
-    (fprintf out "未填读取: ~a\n" u))
-  (define unread (unread-fields/record r rec))
-  (unless (null? unread)
-    (fprintf out "未读字段: ~a\n" unread))
-  (values result
-          (make-report #:function function #:resolved r
-                       #:record rec #:source r)))
+  (define-values (result report)
+    (consume/record c proc #:function function))
+  (fprintf out "―― ~a\n读集: ~a\n" function (hash-ref report 'read-set))
+  (define (show key label)
+    (define v (hash-ref report key))
+    (unless (null? v) (fprintf out "~a: ~a\n" label v)))
+  (show 'unfilled-reads "未填读取")
+  (show 'marks "标记")
+  (show 'flags "消费问题")
+  (show 'unread-fields "未读字段")
+  (values result report))
 
 ;; Enumerate loadable references under the current (or given) head table —
 ;; the quick way to verify a head table points where the application thinks.

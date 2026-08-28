@@ -54,6 +54,24 @@
 (check-not-false (memq 'ghost (hash-ref report 'unread-fields)))
 (check-eq? (hash-ref report 'function) 'mini-render)
 
+;; 二元 proc 额外收 rec：可在消费过程中标记真实使用情形
+(define sink6 (open-output-string))
+(define-values (result2 report2)
+  (debug-consume job
+                 (lambda (src rec)
+                   (record-mark-read! rec 'ghost "旧字段，本渲染器有意忽略")
+                   (define n (config-source-ref src 'copies))
+                   (when (> n 2)
+                     (record-flag! rec 'copies "本机核数不足"))  ; 缺省警告级
+                   n)
+                 #:function 'mini-render2
+                 #:out sink6))
+(check-equal? result2 4)
+(check-false (memq 'ghost (hash-ref report2 'unread-fields)))
+(check-regexp-match #rx"标记: \\(\\(ghost" (get-output-string sink6))
+(check-regexp-match #rx"消费问题: \\(\\(copies warning" (get-output-string sink6))
+(check-equal? (hash-ref report2 'flags) '((copies warning "本机核数不足")))
+
 ;; list-configs：头表核对
 (define root (make-temporary-file "configkit-debug-~a" 'directory))
 (make-directory* (build-path root "jobs" "sub"))

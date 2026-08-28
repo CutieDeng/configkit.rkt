@@ -17,7 +17,9 @@
          list-where
          all-of
          require-filled
-         warn-unfilled)
+         warn-unfilled
+         require-known
+         warn-unknown)
 
 ;; ---------------------------------------------------------------------------
 ;; Immediate combinators (value -> verdict)
@@ -152,3 +154,33 @@
     (filled-verdicts cfg fields
                      (lambda (f)
                        (warn #:reason (format "字段 ~a 无初始化值" f))))))
+
+;; Family membership, the reverse direction of require-filled: not "is
+;; everything I need there" but "is everything there something I support".
+;; Sweeps the enumerable fields matching pattern; members outside the
+;; supported roster are flagged one by one, with a did-you-mean hint
+;; against the roster.
+(define (family-verdicts cfg pattern allowed on-unknown)
+  (define match? (field-matcher pattern))
+  (for/fold ([acc '()] #:result (if (null? acc) #t (reverse acc)))
+            ([f (in-list (config-source-keys cfg))])
+    (if (and (match? f) (not (memq f allowed)))
+        (cons (on-unknown f) acc)
+        acc)))
+
+(define (require-known pattern . allowed)
+  (lambda (cfg)
+    (family-verdicts cfg pattern allowed
+                     (lambda (f)
+                       (fail #:reason "族内出现不支持的字段"
+                             #:expected allowed
+                             #:given f
+                             #:hint (enum-hint f allowed))))))
+
+(define (warn-unknown pattern . allowed)
+  (lambda (cfg)
+    (family-verdicts cfg pattern allowed
+                     (lambda (f)
+                       (define h (enum-hint f allowed))
+                       (warn #:reason (format "族内字段 ~a 不受支持~a" f
+                                              (if h (format "；~a" h) "")))))))

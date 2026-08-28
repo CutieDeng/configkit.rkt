@@ -141,7 +141,9 @@
         (cons 'list-where list-where)
         (cons 'all-of all-of)
         (cons 'require-filled require-filled)
-        (cons 'warn-unfilled warn-unfilled)))
+        (cons 'warn-unfilled warn-unfilled)
+        (cons 'require-known require-known)
+        (cons 'warn-unknown warn-unknown)))
 
 (define (make-config-evaluator)
   (parameterize ([sandbox-output 'string]

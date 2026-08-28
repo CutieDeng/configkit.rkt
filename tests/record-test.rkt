@@ -27,7 +27,7 @@
 
 ;; Read set: first-read order, deduped.
 (check-equal? (record-reads rec) '(copies tune hw-avail))
-(check-equal? (hash-ref (record-unfilled rec) 'hw-avail) 1)
+(check-equal? (record-unfilled rec) '(hw-avail))   ; 名单，无计数
 (check-equal? (record-notes rec) '((hw-avail "渲染为占位注释行")))
 
 ;; Filled-but-never-read fields surface (the typo detector).
@@ -69,7 +69,7 @@
 (check-eq? (hash-ref full 'kind) 'consumer-report)
 (check-equal? (hash-ref full 'read-set) '(copies tune hw-avail))
 (check-not-false (memq 'secret (hash-ref full 'unread-fields)))
-(check-equal? (hash-ref (hash-ref full 'unfilled-reads) 'hw-avail) 1)
+(check-equal? (hash-ref full 'unfilled-reads) '(hw-avail))
 ;; provenance survives serialization as plain data
 (define prov (hash-ref full 'provenance))
 (check-true (for/or ([o (in-list (hash-ref prov 'copies))])
@@ -92,3 +92,71 @@
 (define cr (make-report #:function 'resolve #:resolved (resolve classed)))
 (check-eq? (hash-ref cr 'id) 'classed)
 (check-equal? (hash-ref cr 'class) "demo")
+
+;; ---------------------------------------------------------------------------
+;; 通配读取（config-source-ref-group）与应用态标记（record-mark-read!）
+
+(define-config fam
+  [env:OMP      (introduce) "8"]
+  [env:AFFINITY (introduce) "0-63"]
+  [env:TRACE    (introduce required)]      ; 未填：不可枚举，通配扫不到
+  [copise       (introduce) 16]
+  [tune         () "base"])
+(define rf (resolve fam))
+(define-values (fsrc frec) (make-recording-source rf))
+
+;; 前缀通配：已填的族内成员逐个真实 ref 入读集；未填成员不在 keys 中，
+;; 不被扫掠触碰（族的完备性检查走 require-filled 后验，不走读取面）
+(define envs (config-source-ref-group fsrc 'env:))
+(check-equal? envs (hasheq 'env:OMP "8" 'env:AFFINITY "0-63"))
+(check-equal? (sort (record-reads frec) symbol<?) '(env:AFFINITY env:OMP))
+(check-equal? (record-unfilled frec) '())
+;; regexp 形态等价
+(check-equal? (config-source-ref-group fsrc #rx"^env:") envs)
+
+;; 标记 = 应用声明的真实使用情形：离开未读集，理由进报告可审计
+(record-mark-read! frec 'tune "运行期探测覆盖，渲染器有意不读")
+(check-equal? (unread-fields/record rf frec) '(copise))
+(check-equal? (record-marks frec) '((tune "运行期探测覆盖，渲染器有意不读")))
+(define fr (make-report #:function 'sweep #:resolved rf #:record frec #:source rf))
+(check-equal? (hash-ref fr 'marks) '((tune "运行期探测覆盖，渲染器有意不读")))
+(check-equal? (hash-ref fr 'unread-fields) '(copise))
+;; env:TRACE 的"缺"由求解面暴露，与读取面无关
+(check-eq? (hash-ref (hash-ref fr 'unfilled) 'env:TRACE) 'required)
+
+;; ---------------------------------------------------------------------------
+;; consume/record：一调用完成生产消费循环（静默；debug-consume 是其打印外壳）
+
+(define-values (cv creport)
+  (consume/record rf
+    (lambda (src rec)
+      (record-mark-read! rec 'tune "有意不读")
+      (config-source-ref src 'env:OMP))
+    #:function 'render))
+(check-equal? cv "8")
+(check-eq? (hash-ref creport 'kind) 'consumer-report)
+(check-eq? (hash-ref creport 'function) 'render)
+(check-equal? (hash-ref creport 'read-set) '(env:OMP))
+(check-equal? (hash-ref creport 'marks) '((tune "有意不读")))
+;; 未求解的 config 也可直接喂入（内部代为 resolve）；一元 proc 亦可
+(define-values (cv2 creport2)
+  (consume/record fam (lambda (src) (config-source-ref src 'copise))))
+(check-equal? cv2 16)
+(check-eq? (hash-ref creport2 'function) 'consume)
+
+;; ---------------------------------------------------------------------------
+;; 消费期旗标（record-flag!）：使用值时发现问题，现场标注；缺省警告级
+
+(record-flag! frec 'env:OMP "本机只有 4 核，8 线程将超订")   ; 缺省 warning
+(record-flag! frec 'copise "渲染器无法识别该字段" #:severity 'error)
+(check-equal? (record-flags frec)
+              '((env:OMP warning "本机只有 4 核，8 线程将超订")
+                (copise error "渲染器无法识别该字段")))
+;; 严重度只有 warning/error 两级
+(check-exn exn:fail:contract?
+           (lambda () (record-flag! frec 'x "y" #:severity 'fatal)))
+;; 进报告：'flags 键，往返可 read
+(define fr2 (make-report #:function 'sweep #:resolved rf #:record frec #:source rf))
+(check-equal? (hash-ref fr2 'flags)
+              '((env:OMP warning "本机只有 4 核，8 线程将超订")
+                (copise error "渲染器无法识别该字段")))

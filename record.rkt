@@ -20,6 +20,11 @@
          record-unfilled
          record-notes
          record-note!
+         record-marks
+         record-mark-read!
+         record-flags
+         record-flag!
+         consume/record
          unread-fields/record
          make-report
          write-report
@@ -30,7 +35,8 @@
 ;; ---------------------------------------------------------------------------
 ;; Recording source
 
-(struct record (reads-box unfilled-box notes-box) #:transparent)
+(struct record (reads-box unfilled-box notes-box marks-box flags-box)
+  #:transparent)
 
 (struct recording-source (inner rec)
   #:methods gen:config-source
@@ -49,7 +55,8 @@
      (cond
        [(eq? v source-missing)
         (define u (record-unfilled-box rec))
-        (set-box! u (hash-update (unbox u) key add1 0))
+        (unless (memq key (unbox u))
+          (set-box! u (cons key (unbox u))))
         (cond [(procedure? fail-result) (fail-result)]
               [else fail-result])]
        [else v]))
@@ -59,14 +66,17 @@
      (keys-of (recording-source-inner s)))])
 
 (define (make-recording-source source)
-  (define rec (record (box '()) (box (hasheq)) (box '())))
+  (define rec (record (box '()) (box '()) (box '()) (box '()) (box '())))
   (values (recording-source source rec) rec))
 
 (define (record-reads rec)
   ;; Fields in first-read order.
   (map car (sort (unbox (record-reads-box rec)) < #:key cdr)))
 
-(define (record-unfilled rec) (unbox (record-unfilled-box rec)))
+;; Fields that were read while unfilled, in first-hit order.  The fact that
+;; a read landed on an unfilled field is the signal; how many times it did
+;; carries no information.
+(define (record-unfilled rec) (reverse (unbox (record-unfilled-box rec))))
 
 (define (record-note! rec field message)
   (set-box! (record-notes-box rec)
@@ -74,9 +84,50 @@
 
 (define (record-notes rec) (reverse (unbox (record-notes-box rec))))
 
+;; The application vouches that a field is genuinely consumed (or
+;; deliberately ignored) through a path the recording source cannot observe
+;; — wholesale dumps, runtime probes, legacy knobs.  Marked fields leave the
+;; unread set; the reason survives into the report, keeping the claim
+;; auditable instead of silently suppressed.
+(define (record-mark-read! rec field reason)
+  (set-box! (record-marks-box rec)
+            (cons (list field reason) (unbox (record-marks-box rec)))))
+
+(define (record-marks rec) (reverse (unbox (record-marks-box rec))))
+
+;; Consumption-time verdicts: a problem the application discovers while
+;; actually using a value (a path that turns out not to exist, a knob the
+;; local machine cannot honor).  Severity defaults to 'warning — most
+;; consumption-side findings are advisory; escalating to 'error is a
+;; deliberate act, never the path of least resistance.
+(define (record-flag! rec field message #:severity [severity 'warning])
+  (unless (memq severity '(warning error))
+    (raise-argument-error 'record-flag! "(or/c 'warning 'error)" severity))
+  (set-box! (record-flags-box rec)
+            (cons (list field severity message)
+                  (unbox (record-flags-box rec)))))
+
+(define (record-flags rec) (reverse (unbox (record-flags-box rec))))
+
+;; The production consumption loop in one call: resolve if needed, run the
+;; consumer on a recording view, return its result and the canonical report.
+;; A unary proc receives the recording source; a binary proc additionally
+;; receives the record (for record-mark-read!/record-note!/record-flag!).
+;; Silent — debug-consume in debug.rkt is this loop's printing twin.
+(define (consume/record c proc #:function [function 'consume])
+  (define r (if (resolved? c) c (resolve c)))
+  (define-values (src rec) (make-recording-source r))
+  (define result
+    (if (procedure-arity-includes? proc 2) (proc src rec) (proc src)))
+  (values result
+          (make-report #:function function #:resolved r
+                       #:record rec #:source r)))
+
 (define (unread-fields/record source rec)
   ;; Filled-but-never-read: the typo detector (docs §3.1 consequence 2).
-  (define read-set (list->seteq (record-reads rec)))
+  ;; Actual reads and application marks both count as consumption.
+  (define read-set (set-union (list->seteq (record-reads rec))
+                              (list->seteq (map car (record-marks rec)))))
   (sort (for/list ([k (in-list (config-source-keys source))]
                    #:unless (set-member? read-set k))
           k)
@@ -130,6 +181,8 @@
                             #:unless (eq? v absent))
                   (values k (sanitize v)))])
           (hash-set* base
+                     'id (resolved-id r)
+                     'class (resolved-class r)
                      'verdict (if (resolved-ok? r) 'ok 'failed)
                      'id (sanitize (resolved-id r))
                      'class (sanitize (resolved-class r))
@@ -150,6 +203,8 @@
                  'read-set (record-reads rec)
                  'unfilled-reads (sanitize (record-unfilled rec))
                  'notes (sanitize (record-notes rec))
+                 'marks (sanitize (record-marks rec))
+                 'flags (sanitize (record-flags rec))
                  'unread-fields
                  (if source (unread-fields/record source rec) '()))
       with-resolved))

@@ -11,7 +11,7 @@
 ;; of failing on the first.
 
 (require racket/generic
-         (for-syntax racket/base racket/syntax syntax/parse)
+         (for-syntax racket/base)
          "source.rkt")
 
 (provide define-config
@@ -349,7 +349,11 @@
     warnings     ; (listof issue), never blocking
     skipped      ; (listof (list field kind srcloc reason))
     explicit     ; seteq of fields with a non-default provider
-    id)          ; root config name, or (listof name) for parallel roots
+    id)          ; root config name, or (listof name) for parallel roots.
+                 ; id is NOT a field: it lives outside the field space, never
+                 ; unifies, never inherits through #:extends, and is untouched
+                 ; by the declaration axes — every config's id is its own.
+                 ; Contrast 'class, which is an ordinary field by convention.
   #:transparent
   #:methods gen:config-source
   [(define (config-source-suite r)

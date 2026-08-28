@@ -349,3 +349,13 @@
 (check-equal? (resolved-class (resolve classy-mid)) "bench-job")   ; 自动继承
 (check-equal? (resolved-class (resolve classy-leaf)) "smoke-job")  ; 覆盖
 (check-false (resolved-class r1))
+
+;; id 无继承性：子 config 的 id 是自己的名字，父链名字永不混入
+(define-config id-parent [p () 1])
+(define-config id-child #:extends id-parent [q () 2])
+(check-eq? (resolved-id (resolve id-child)) 'id-child)
+(check-eq? (resolved-id (resolve id-parent)) 'id-parent)
+;; class 是普通字段：照常沿链覆盖
+(define-config class-parent [class () "base-class"])
+(define-config class-child #:extends class-parent [class (override) "sub-class"])
+(check-equal? (resolved-class (resolve class-child)) "sub-class")

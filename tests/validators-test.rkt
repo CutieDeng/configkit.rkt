@@ -90,6 +90,46 @@
 (check-equal? (length (resolved-warnings rs)) 2)
 
 ;; ---------------------------------------------------------------------------
+;; require-known / warn-unknown：族内字段名白名单（require-filled 的反方向）
+
+(define-config env-job
+  [env:OMP_NUM_THREADS   (introduce) "8"]
+  [env:GOMP_CPU_AFFINITY (introduce) "0-63"]
+  [env:OMP_NUM_THREAD    (introduce) "4"]     ; 拼错的族成员
+  [copies () 2])                              ; 族外字段不受检查
+
+;; 应用态快速门：一个只带全局后验的守卫 config，并列组合即生效
+(define-config env-guard
+  #:validate/post (require-known 'env:
+                                 'env:OMP_NUM_THREADS 'env:GOMP_CPU_AFFINITY))
+(define rk (resolve (config env-job env-guard)))
+(check-false (resolved-ok? rk))
+(define ki (car (resolved-issues rk)))
+(check-equal? (issue-message ki) "族内出现不支持的字段")
+(check-eq? (hash-ref (issue-data ki) 'given) 'env:OMP_NUM_THREAD)
+(check-regexp-match #rx"是否想要 env:OMP_NUM_THREADS"
+                    (hash-ref (issue-data ki) 'hint))
+(check-regexp-match #rx"不支持的字段" (explain-resolved rk))
+
+;; warn 版：不阻断，逐条入警告
+(define-config env-guard/soft
+  #:validate/post (warn-unknown 'env:
+                                'env:OMP_NUM_THREADS 'env:GOMP_CPU_AFFINITY))
+(define rw (resolve (config env-job env-guard/soft)))
+(check-true (resolved-ok? rw))
+(check-equal? (length (resolved-warnings rw)) 1)
+(check-regexp-match #rx"env:OMP_NUM_THREAD 不受支持；是否想要"
+                    (issue-message (car (resolved-warnings rw))))
+
+;; 全员合法 → 通过；regexp 形态等价
+(define-config env-clean
+  [env:OMP_NUM_THREADS (introduce) "8"] [copies () 2])
+(check-true (resolved-ok? (resolve (config env-clean env-guard))))
+(define-config env-guard/rx
+  #:validate/post (require-known #rx"^env:" 'env:OMP_NUM_THREADS))
+(check-true (resolved-ok? (resolve (config env-clean env-guard/rx))))
+
+;; ---------------------------------------------------------------------------
 ;; In .config files: combinators available inside the sandbox, no lambda
 
 (define root (make-temporary-file "configkit-validators-~a" 'directory))
@@ -101,12 +141,24 @@
 [copies        ((validate (integer-between 1 8))) 4]
 EOF
              o)))
+(call-with-output-file (build-path root "jobs" "env-family.config")
+  (lambda (o)
+    (display #<<EOF
+#:validate/post (require-known "env:" 'env:OMP_NUM_THREADS)
+[env:OMP_NUM_THREADS (introduce) "8"]
+[env:BOGUS (introduce) "1"]
+EOF
+             o)))
 (parameterize ([current-config-search-heads (hash 'jobs (build-path root "jobs"))])
   (define c (load-config "@jobs/checked"))
   (define r (resolve c))
   (check-true (has-issue? r 'validator-failed 'output-format))
   (check-equal? (issue-msg r 'output-format) "不在枚举集内")
-  (check-false (has-issue? r 'validator-failed 'copies)))
+  (check-false (has-issue? r 'validator-failed 'copies))
+  ;; 族白名单也可在 .config 内自声明（沙箱注入）
+  (define rf (resolve (load-config "@jobs/env-family")))
+  (check-false (resolved-ok? rf))
+  (check-eq? (hash-ref (issue-data (car (resolved-issues rf))) 'given) 'env:BOGUS))
 (delete-directory/files root)
 
 ;; ---------------------------------------------------------------------------
