@@ -92,6 +92,7 @@ EOF
   (check-true (config-object? nightly))
   (define r (resolve nightly))
   (check-true (resolved-ok? r) (format "~a" (resolved-issues r)))
+  (check-eq? (resolved-id r) 'nightly)          ; .config 的 id 即文件名
   (check-equal? (resolved-value r 'copies) 4)
   (check-equal? (resolved-value r 'output-parent) "/srv/spec/runs")
   (check-eq? (resolved-value r 'flag) #t)              ; true 归一化
@@ -163,3 +164,32 @@ EOF
   (check-equal? rv '(lambda (v) v)))
 
 (delete-directory/files root)
+
+;; ---------------------------------------------------------------------------
+;; 检视意见回归（loader）
+
+(define root2 (make-temporary-file "configkit-loader2-~a" 'directory))
+(define (w2! rel text)
+  (define p (build-path root2 rel))
+  (make-parent-directory* p)
+  (call-with-output-file p (lambda (o) (display text o))))
+
+;; 5a) #:validate/post 缺表达式 → 友好报错
+(w2! "jobs/no-payload.config" "#:validate/post\n")
+;; 5b) 原始布尔字面量被拒
+(w2! "jobs/raw-bool.config" "[flag () #t]\n")
+;; 4) 符号链接逃逸：根内目录链接指向根外
+(w2! "outside/secret.config" "[leak () 1]\n")
+(make-file-or-directory-link (build-path root2 "outside")
+                             (build-path root2 "jobs" "link"))
+
+(parameterize ([current-config-search-heads (hash 'jobs (build-path root2 "jobs"))])
+  (check-exn #rx"#:validate/post needs an expression"
+             (lambda () (load-config "@jobs/no-payload")))
+  (check-exn #rx"true/false"
+             (lambda () (load-config "@jobs/raw-bool")))
+  ;; 词法检查（一段）通过，文件系统解析（二段）拦截
+  (check-exn #rx"symlink resolution"
+             (lambda () (load-config "@jobs/link/secret"))))
+
+(delete-directory/files root2)

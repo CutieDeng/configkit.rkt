@@ -90,13 +90,20 @@
 **测试注入**：假值 = 普通片段覆盖（零机制）；假 `.config` 树 = fake 头；
 假代码基配置 = 注册表换绑。
 
+**自我声明（id/class）**：每个 config 的名字即其 id——`define-config` 的绑定名、
+`.config` 的文件名——不随链继承；`(resolved-id r)` 给出求解根的名字（并列组合
+为各部分名字的平铺列表）。`class` 是惯例字段而非机制：链上自动继承、
+`(override)` 改写、可 `sealed` 封印，`(resolved-class r)` 查询（未声明为 `#f`）。
+两者进 `resolve-summary`/`peek` 头部与 `.rktd` 报告（`'id`/`'class` 键），
+用于调试与报告归档时回答"这是谁、哪一类"。
+
 ## 4. 应用态调测接口（`debug.rkt`）
 
 开发过程中的检验回路，全部是公共查询面的薄封装，可进 REPL 与 dev 脚本：
 
 | 接口 | 用途 |
 |---|---|
-| `(resolve-summary c)` | 一行健康度：`ok?/errors/warnings/skipped/unfilled/fields` |
+| `(resolve-summary c)` | 一行健康度：`id/class/ok?/errors/warnings/skipped/unfilled/fields` |
 | `(peek c)` | 求解 + 打印展开与值表，返回 resolved 继续查 |
 | `(peek-field c 'f)` | 单字段：值 + 完整定义链（谁、哪行、生效/让位/不生效） |
 | `(check-config c)` | 布尔门：健康返回 `#t` 静默，不健康打印展开返回 `#f` |
@@ -129,7 +136,17 @@
 9. **hash 强转最宽松**（含 `multi-introducer`），且 provenance 降到片段粒度——
    只用于简单覆盖，成规模配置写 `define-config` 或 `.config`。
 10. **加载器引用无向上路径**：`"../x"`、`"/abs"`、`"a//b"` 一律拒绝
-    （`string-split` 必须 `#:trim? #f`，这里曾有一个真实的绝对路径静默降级洞）。
+    （`string-split` 必须 `#:trim? #f`，这里曾有一个真实的绝对路径静默降级洞）；
+    包含检查是二段的——词法 + 符号链接解析后，根内 symlink 指向根外同样被拒。
+11. **`.config` 里布尔只有 `true`/`false`**：原始 `#t`/`#f` 字面量在装载期被拒。
+12. **报告的 `values` 只含已填字段**：未填在 `unfilled` 键下，没有占位符号，
+    值恰为 `'<unfilled>` 的字段不会混淆。
+13. **验证器返回非协议值**（如误写 `'fail`）会记 `validator-protocol` 警告，
+    不静默放行也不判失败。
+14. **`suite` 字段没有内核特殊语义**：它只是普通字段外加协议上的一个便捷
+    访问器（缺失时退化为 `'unknown`）；"不能混用两个 suite"是 `singlenew` +
+    合一的涌现性质，不是特判——两条链并列组合时 `suite` 字段自然报
+    multiple-introducers。
 
 ## 6. 边界：尚未实现
 
@@ -139,3 +156,4 @@
   现状旧实现原样工作，引擎门面（`src/engine.rkt`）委托之。
 - 报告格式以 `format-version` 演化；对外接口遵循 vN 契约
   （`docs/config-refactor.md` §3.5）。
+- 本目录引用的 `docs/` 设计文档在上层 runspeccpu 仓库；独立发布时需携带。

@@ -24,7 +24,9 @@
 ;; One-line health summary of a config/composition.
 (define (resolve-summary c)
   (define r (->resolved c))
-  (hash 'ok? (resolved-ok? r)
+  (hash 'id (resolved-id r)
+        'class (resolved-class r)
+        'ok? (resolved-ok? r)
         'errors (length (resolved-issues r))
         'warnings (length (resolved-warnings r))
         'skipped (length (resolved-skipped r))

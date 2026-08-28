@@ -13,6 +13,8 @@
 
 ;; resolve-summary / check-config
 (define s (resolve-summary job))
+(check-eq? (hash-ref s 'id) 'job)
+(check-false (hash-ref s 'class))
 (check-true (hash-ref s 'ok?))
 (check-equal? (hash-ref s 'errors) 0)
 (check-equal? (hash-ref s 'unfilled) 1)

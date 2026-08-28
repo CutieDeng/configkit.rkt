@@ -29,6 +29,8 @@
          resolved-warnings
          resolved-values
          resolved-value
+         resolved-id
+         resolved-class
          resolved-skipped
          unfilled-fields
          inoperative-declarations
@@ -346,7 +348,8 @@
     issues       ; (listof issue), errors only
     warnings     ; (listof issue), never blocking
     skipped      ; (listof (list field kind srcloc reason))
-    explicit)    ; seteq of fields with a non-default provider
+    explicit     ; seteq of fields with a non-default provider
+    id)          ; root config name, or (listof name) for parallel roots
   #:transparent
   #:methods gen:config-source
   [(define (config-source-suite r)
@@ -367,6 +370,12 @@
 (define (resolved-value r field [fail-result source-missing])
   (config-source-ref r field fail-result))
 
+;; 'class is a naming convention, not a mechanism: an ordinary field that
+;; chains inherit and override like any other, read here for debug output
+;; and reports.  #f when the config declares no class.
+(define (resolved-class r)
+  (resolved-value r 'class #f))
+
 (define (unfilled-fields r) (resolved-unfilled r))
 
 (define (inoperative-declarations r)
@@ -379,7 +388,11 @@
   (hash-ref (resolved-origins r) field '()))
 
 (define (config-env-ref r field [fail-result source-missing])
-  (unless (set-member? (resolved-env-fields r) field)
+  (define envs
+    (cond [(resolved? r) (resolved-env-fields r)]
+          [(resolved-view? r) (resolved-view-env r)]
+          [else (raise-argument-error 'config-env-ref "resolved view" r)]))
+  (unless (set-member? envs field)
     (raise-arguments-error 'config-env-ref
                            "field is not exported to the validation environment"
                            "field" field))
@@ -410,7 +423,13 @@
                               "skip is only meaningful for posterior validators"
                               (hasheq))))]
       [(list? v) (for-each loop v)]
-      [else (void)])))
+      [else
+       ;; A validator that returns a non-protocol value ('fail, a number, ...)
+       ;; is almost certainly a bug in the validator; surface it as a warning
+       ;; (not silently passing, not failing the config for a tooling slip).
+       (add-warning! (issue 'validator-protocol field
+                          (format "验证器返回了非协议值: ~s" v)
+                          (hasheq 'given v)))])))
 
 (define (call-validator proc arg)
   ;; Closures originating from .config run sandboxed at the #lang layer; the
@@ -427,8 +446,19 @@
 
 ;; --- the pipeline ----------------------------------------------------------
 
+(define (composition-id top)
+  ;; The resolution root's name — a single name for a lone config, a flat
+  ;; list of part names for a parallel composition.  Purely descriptive
+  ;; (debug output, reports); nothing in the pipeline reads it.
+  (define names
+    (let collect ([n top])
+      (cond [(config-par? n) (append-map collect (config-par-parts n))]
+            [else (list (config-object-name n))])))
+  (if (null? (cdr names)) (car names) names))
+
 (define (resolve composition)
-  (define nodes (all-nodes (->config composition 'resolve)))
+  (define top (->config composition 'resolve))
+  (define nodes (all-nodes top))
   (define issues '())      ; errors: gate the pipeline stage by stage
   (define warnings '())    ; collected throughout, never gating
   (define skipped '())
@@ -672,7 +702,11 @@
                         (compose add-warning! enrich)
                         add-skip!))))
 
-  ;; Phase ②: computed defaults, lazily with cycle detection.
+  ;; Phase ②: computed defaults, lazily with cycle detection.  A field on
+  ;; which a cycle was detected is poisoned: it stays unfilled even though
+  ;; the outer in-flight computation completes with fallback data — a field
+  ;; must not simultaneously carry a computed-cycle issue and a value.
+  (define cycle-fields (mutable-seteq))
   (define computing (make-hasheq))
   (define view
     (make-resolved-view (lambda () values-out) env-set explicit-set))
@@ -680,7 +714,8 @@
     (when (eq? (hash-ref unfilled-out field #f) 'computed-pending)
       (when (hash-ref computing field #f)
         (add-issue! (issue 'computed-cycle field "计算默认值循环依赖" (hasheq)))
-        (hash-set! unfilled-out field 'no-provider))
+        (set-add! cycle-fields field)
+        (hash-set! unfilled-out field 'computed-cycle))
       (unless (hash-ref computing field #f)
         (hash-set! computing field #t)
         (define os (hash-ref origins-out field '()))
@@ -701,13 +736,14 @@
                                               (exn-message ex) (hasheq)))
                            (hash-set! unfilled-out field 'no-provider))])
           (define v (proc view))
-          (hash-set! values-out field (present v))
-          (hash-remove! unfilled-out field)
-          (hash-set! origins-out field
-                     (append os (list (origin 'computed
-                                              (origin-config-name pending)
-                                              (origin-srcloc pending)
-                                              #f))))))))
+          (unless (set-member? cycle-fields field)
+            (hash-set! values-out field (present v))
+            (hash-remove! unfilled-out field)
+            (hash-set! origins-out field
+                       (append os (list (origin 'computed
+                                                (origin-config-name pending)
+                                                (origin-srcloc pending)
+                                                #f)))))))))
   (set-box! (resolved-view-force-box view) force-field!)
   (cond
     [(stage-clean?)
@@ -733,7 +769,7 @@
 
   (define result
     (resolved values-out origins-out unfilled-out env-set
-              '() '() '() explicit-set))
+              '() '() '() explicit-set (composition-id top)))
   (define (run-post! field vd)
     (apply-verdict! (call-validator (vdecl-proc vd) result)
                     field 'post (vdecl-srcloc vd)

@@ -120,11 +120,19 @@
           'function function))
   (define with-resolved
     (if r
-        (let ([values-view
-               (for/hash ([k (in-list (config-source-keys r))])
-                 (values k (sanitize (config-source-ref r k '<unfilled>))))])
+        ;; values carries FILLED fields only; unfilled ones live under the
+        ;; 'unfilled key — no placeholder symbol that a real value could
+        ;; collide with.
+        (let* ([absent (gensym)]
+               [values-view
+                (for*/hash ([k (in-list (config-source-keys r))]
+                            [v (in-value (config-source-ref r k absent))]
+                            #:unless (eq? v absent))
+                  (values k (sanitize v)))])
           (hash-set* base
                      'verdict (if (resolved-ok? r) 'ok 'failed)
+                     'id (sanitize (resolved-id r))
+                     'class (sanitize (resolved-class r))
                      'suite (config-source-suite r)
                      'values values-view
                      'issues (map sanitize-issue (resolved-issues r))

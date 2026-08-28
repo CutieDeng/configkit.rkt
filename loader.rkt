@@ -51,20 +51,49 @@
                              "reference" ref)))
   parts)
 
+;; Resolve symlinks along every existing component (bounded per component to
+;; break link cycles); components that do not exist yet are appended as-is.
+(define (fully-resolve p)
+  (define parts (explode-path (simplify-path (path->complete-path p) #f)))
+  (for/fold ([cur (car parts)]) ([comp (in-list (cdr parts))])
+    (define next (build-path cur comp))
+    (let loop ([q next] [fuel 40])
+      (cond
+        [(zero? fuel) q]
+        [(link-exists? q)
+         (define target (resolve-path q))
+         (define-values (dir _f _d) (split-path q))
+         (loop (simplify-path (path->complete-path target dir) #f)
+               (sub1 fuel))]
+        [else q]))))
+
+(define (under-root? root path)
+  (define rs (path->string root))
+  (string-prefix? (path->string path)
+                  (if (string-suffix? rs "/") rs (string-append rs "/"))))
+
 (define (contained-path who root parts)
-  ;; Join and double-check containment after simplification.
+  ;; Two-stage containment: the path itself (lexical), then the
+  ;; filesystem-resolved path (symlinks followed) — both must stay inside
+  ;; the (equally resolved) root.
   (define joined
     (apply build-path root (append (drop-right parts 1)
                                    (list (string-append (last parts)
                                                         config-extension)))))
   (define simplified (simplify-path (path->complete-path joined) #f))
   (define root* (simplify-path (path->complete-path root) #f))
-  (define rs (path->string root*))
-  (define ss (path->string simplified))
-  (unless (string-prefix? ss (if (string-suffix? rs "/") rs (string-append rs "/")))
+  (unless (under-root? root* simplified)
     (raise-arguments-error who "reference escapes its root"
                            "reference" (string-join parts "/")
-                           "root" rs))
+                           "root" (path->string root*)))
+  (define resolved (fully-resolve simplified))
+  (define root-resolved (fully-resolve root*))
+  (unless (under-root? root-resolved resolved)
+    (raise-arguments-error who
+                           "reference escapes its root after symlink resolution"
+                           "reference" (string-join parts "/")
+                           "resolved" (path->string resolved)
+                           "root" (path->string root-resolved)))
   simplified)
 
 (define (resolve-reference who ref base-dir)
@@ -156,7 +185,11 @@
   (define d (syntax->datum stx))
   (let check ([v d])
     (cond
-      [(or (number? v) (string? v) (symbol? v) (boolean? v) (null? v)) (void)]
+      [(boolean? v)
+       (raise-arguments-error who
+                              "布尔字面量请写 true/false（#t/#f 保留给框架层）"
+                              "at" (stx-loc stx))]
+      [(or (number? v) (string? v) (symbol? v) (null? v)) (void)]
       [(pair? v) (check (car v)) (check (cdr v))]
       [else (raise-arguments-error who
                                    "value positions in .config carry data literals only"
@@ -224,6 +257,9 @@
        (set! parent-ref (syntax->datum (cadr xs)))
        (loop (cddr xs))]
       [(eq? (syntax-e (car xs)) '#:validate/post)
+       (when (null? (cdr xs))
+         (raise-arguments-error who "#:validate/post needs an expression"
+                                "file" path))
        (set! globals
              (cons (vdecl 'post
                           (sandboxed-closure ev (syntax->datum (cadr xs))

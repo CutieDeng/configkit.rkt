@@ -74,3 +74,21 @@
 (define prov (hash-ref full 'provenance))
 (check-true (for/or ([o (in-list (hash-ref prov 'copies))])
               (eq? (hash-ref o 'kind) 'provided)))
+
+;; 检视意见 5c：报告 values 只含已填字段，无占位符碰撞
+(define-config tricky
+  [real-sym () '<unfilled>]          ; 字段值恰为该符号——不会与占位混淆
+  [gap (introduce required)])
+(define rt (resolve tricky))
+(define tr (make-report #:function 'resolve #:resolved rt))
+(check-equal? (hash-ref (hash-ref tr 'values) 'real-sym) '<unfilled>)
+(check-false (hash-has-key? (hash-ref tr 'values) 'gap))
+(check-true (hash-has-key? (hash-ref tr 'unfilled) 'gap))
+
+;; id / class 进报告：'id 总在，'class 未声明时为 #f
+(check-eq? (hash-ref full 'id) 'job)
+(check-false (hash-ref full 'class))
+(define-config classed [class () "demo"] [x () 1])
+(define cr (make-report #:function 'resolve #:resolved (resolve classed)))
+(check-eq? (hash-ref cr 'id) 'classed)
+(check-equal? (hash-ref cr 'class) "demo")

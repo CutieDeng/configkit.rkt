@@ -297,3 +297,55 @@
 (define-config gated-computed-b [p (introduce) 2])
 (define rg3 (resolve (config gated-computed gated-computed-b)))
 (check-eq? (hash-ref (unfilled-fields rg3) 'q) 'computed-skipped)
+
+;; ---------------------------------------------------------------------------
+;; 检视意见回归
+
+;; 1) 循环字段被污染：报了 computed-cycle 就不得同时有值
+(define rc2 (resolve cyclic))
+(check-true (has-issue? rc2 'computed-cycle))
+(check-eq? (hash-ref (unfilled-fields rc2) 'a 'filled!) 'computed-cycle)
+(check-eq? (resolved-value rc2 'a 'absent) 'absent)
+
+;; 2) 非协议裁决值 → warning，不静默放行也不判失败
+(define-config proto-slip
+  [x ((validate (lambda (v) 'fail))) 1])   ; 误写符号 'fail
+(define rps (resolve proto-slip))
+(check-true (resolved-ok? rps))
+(check-equal? (issue-kind (car (resolved-warnings rps))) 'validator-protocol)
+(check-regexp-match #rx"非协议值" (issue-message (car (resolved-warnings rps))))
+
+;; 3) 计算默认闭包内可用 config-env-ref（收 view 亦可）
+(define-config env-in-computed
+  [knob (env (default 7))]
+  [derived ((default (lambda (v) (* 2 (config-env-ref v 'knob)))))])
+(define rec2 (resolve env-in-computed))
+(check-true (resolved-ok? rec2) (format "~a" (resolved-issues rec2)))
+(check-equal? (resolved-value rec2 'derived) 14)
+
+;; suite 字段无特殊内核语义：跨 suite 混用的拒绝是 singlenew+合一的涌现性质
+(define-config suite-a [suite (introduce sealed) 'cpu2017])
+(define-config suite-b [suite (introduce sealed) 'cpu2026])
+(define rmix (resolve (config suite-a suite-b)))
+(check-true (has-issue? rmix 'multiple-introducers 'suite))
+;; 无 suite 时协议退化为 'unknown，而非报错
+(define-config no-suite [x () 1])
+(check-eq? (config-source-suite (resolve no-suite)) 'unknown)
+
+;; ---------------------------------------------------------------------------
+;; id / class：自我声明（调试与报告输出）
+
+;; id = 求解根的名字，不随链继承：job 的 resolved 自报 job，不是 base/site
+(check-eq? (resolved-id r1) 'job)
+;; 并列组合自报各部分名字（平铺列表）
+(check-equal? (resolved-id r7) '(tool-a tool-c))
+;; class 是惯例字段，零新机制：链上自动继承，override 改写，未声明为 #f
+(define-config classy-base
+  [class () "bench-job"]
+  [k () 1])
+(define-config classy-mid  #:extends classy-base [k (override) 2])
+(define-config classy-leaf #:extends classy-mid  [class (override) "smoke-job"])
+(check-equal? (resolved-class (resolve classy-base)) "bench-job")
+(check-equal? (resolved-class (resolve classy-mid)) "bench-job")   ; 自动继承
+(check-equal? (resolved-class (resolve classy-leaf)) "smoke-job")  ; 覆盖
+(check-false (resolved-class r1))
