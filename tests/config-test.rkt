@@ -333,9 +333,10 @@
 (check-eq? (config-source-suite (resolve no-suite)) 'unknown)
 
 ;; ---------------------------------------------------------------------------
-;; 管线重排：计算默认（①）在立即验证（②）之前完成——终值一律过验证器
+;; 管线时序：验证的执行时机在全部 default（字面与计算）处理完之后——
+;; 验证器检查成形后的记录
 
-;; 计算出的值违反本字段 validate → 报错（旧序下静默漏过），归因 computed
+;; 计算出的值同样受本字段 validate 检查，归因 computed
 (define-config computed-checked
   [copies  ((default 2))]
   [build-n ((default (lambda (v) (* 64 (config-source-ref v 'copies))))

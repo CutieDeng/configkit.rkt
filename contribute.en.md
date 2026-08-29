@@ -60,11 +60,12 @@ or demote one side to a `default`). The resolution pipeline has five gated
 stages: merge → ① computed defaults (lazy, with cycle detection; a field on
 a detected cycle is poisoned and never gets a value) → ② immediate
 validation → ③ per-field posterior validation → ④ global posterior
-validation. ① precedes ② — validate is a contract on a field's **final**
-value, so computed values face their validators exactly like provided ones;
-① and ② form one accumulation group (a computed failure degrades to an
-entry and never masks the validation of its inputs, or vice versa). A stage
-with errors gates all later stages; collected warnings are always kept. The
+validation. The timing principle: **validation runs only after every kind
+of default — literal and computed — has settled**; validators check the
+formed record, never the pipeline's intermediates. ① and ② form one
+accumulation group (a computed failure degrades to an entry and never
+masks the validation of its inputs, or vice versa). A stage with errors
+gates all later stages; collected warnings are always kept. The
 semantic layer never pushes: provenance, read sets, and skipped validators
 are passive records — query what you need.
 

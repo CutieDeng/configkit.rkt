@@ -709,10 +709,10 @@
                                 'value-at (origin-srcloc o))
                      d1))
       (struct-copy issue i [data d2])))
-  ;; Phase ①: computed defaults, lazily with cycle detection.  Runs BEFORE
-  ;; the immediate validators, so a computed value faces its field's
-  ;; validators exactly like a provided one — validate is a contract on the
-  ;; field's final value, whoever produced it.  A field on
+  ;; Phase ①: computed defaults, lazily with cycle detection.  Value
+  ;; formation (merge + every kind of default, literal and computed)
+  ;; completes here; validation's turn comes only afterwards — validators
+  ;; check the formed record, never the pipeline's intermediates.  A field on
   ;; which a cycle was detected is poisoned: it stays unfilled even though
   ;; the outer in-flight computation completes with fallback data — a field
   ;; must not simultaneously carry a computed-cycle issue and a value.
@@ -764,8 +764,8 @@
            #:when (eq? reason 'computed-pending))
        (hash-set! unfilled-out field 'computed-skipped))])
 
-  ;; Phase ②: immediate validators, on every field that ended with a value
-  ;; — provided or computed alike.
+  ;; Phase ②: immediate validators — running after all defaults have
+  ;; settled, over every field that ended with a value.
   (when merge-clean?
     (for ([fv (in-list (reverse immediate-validators))])
       (define field (car fv))
