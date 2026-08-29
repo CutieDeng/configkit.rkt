@@ -42,7 +42,12 @@ for unfilled fields belongs to the consumer, not to the library**. The
 protocol also carries a wildcard read, `config-source-ref-group`
 (prefix/regexp sweep over a field family, each member a genuine ref,
 returning the filled matches; unfilled fields are not enumerable and are
-never touched).
+never touched), and a scoped-fallback lookup,
+`config-source-ref/fallback` — the carrier of sub-option conventions like
+`bench:710:coptimize` → `coptimize`: hierarchical names live in the flat
+field space with zero new kernel mechanism; absence is decided against the
+key set, so expected-absent specific names never flood the unfilled-read
+roster.
 
 **`config.rkt` — a config is a partial record; declarations are voluntary
 checks.** Unfilled fields are a first-class state (not `#f`, not a

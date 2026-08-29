@@ -13,6 +13,7 @@
          config-source-explicit?
          config-source-keys
          config-source-ref-group
+         config-source-ref/fallback
          field-matcher
          source-missing)
 
@@ -38,6 +39,22 @@
              #:when (match? k))
     (define v (config-source-ref src k source-missing))
     (if (eq? v source-missing) out (hash-set out k v))))
+
+;; Scoped lookup, the carrier of sub-option conventions like
+;; bench:710:coptimize → coptimize: try names most-specific first, the first
+;; enumerable one answers, otherwise the ordinary fail contract applies.
+;; Misses are decided against the key set, not by ref — a recording source
+;; therefore logs only the name actually consumed, and expected-absent
+;; specific names do not flood the unfilled-read roster.
+(define (config-source-ref/fallback src names [fail-result source-missing])
+  (define ks (config-source-keys src))
+  (let loop ([ns names])
+    (cond
+      [(null? ns)
+       (cond [(procedure? fail-result) (fail-result)]
+             [else fail-result])]
+      [(memq (car ns) ks) (config-source-ref src (car ns) fail-result)]
+      [else (loop (cdr ns))])))
 
 ;; Family membership test shared by the wildcard operations: a symbol/string
 ;; pattern matches as a name prefix, a regexp matches the whole name.

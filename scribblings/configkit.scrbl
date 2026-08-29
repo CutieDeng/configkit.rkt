@@ -111,6 +111,10 @@
               @defproc[(config-source-ref-group [s config-source?]
                                                 [pattern (or/c symbol? string? regexp?)])
                        hash?]
+              @defproc[(config-source-ref/fallback [s config-source?]
+                                                   [names (listof symbol?)]
+                                                   [fail any/c source-missing])
+                       any/c]
               @defthing[source-missing symbol?])]{
 消费者面向的取值协议。显式 @racket[#f] 是值不是缺失；缺失依 @racket[fail]
 （值原样返回、过程调用之、缺省返回哨兵 @racket[source-missing]）。
@@ -118,7 +122,13 @@
 @racket[config-source-ref-group] 是通配读取：按前缀（符号/字符串，如
 @racket['env:]）或 regexp 匹配可枚举字段名，逐成员@bold{真实} ref
 （录制源如实入读集），返回已填匹配的 @racket[hasheq]。未填字段不可枚举、
-不被扫掠触碰——族的完备性检查走 @racket[require-filled] 后验，不走读取面。}
+不被扫掠触碰——族的完备性检查走 @racket[require-filled] 后验，不走读取面。
+
+@racket[config-source-ref/fallback] 是作用域回退查找——子选项约定
+（如 @racket['bench:710:coptimize] 回退到 @racket['coptimize]）的承载：
+按特异度顺序尝试名字，第一个可枚举者应答，全缺走普通 fail 契约。
+缺席判定查键集而非 ref：录制源只记真正消费的名字，预期缺席的特异名
+不进未填读取名单。分层名字就是普通字段，六轴/provenance/守卫照常适用。}
 
 @section{验证器组合子（configkit/validators）}
 

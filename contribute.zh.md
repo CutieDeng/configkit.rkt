@@ -34,7 +34,10 @@
 （值原样返回、过程调用之、缺省返回 `source-missing` 哨兵）——
 **未填的处理策略属于消费者，不属于库**。协议附带通配读取
 `config-source-ref-group`（前缀/regexp 扫掠字段族，逐成员真实 ref，
-返回已填匹配；未填不可枚举、不被触碰）。
+返回已填匹配；未填不可枚举、不被触碰）与作用域回退
+`config-source-ref/fallback`（子选项约定 `bench:710:coptimize` → `coptimize`
+的查找承载：分层名字住进扁平字段空间，内核零新机制；缺席判定查键集，
+预期缺席不入未填读取名单）。
 
 **`config.rkt`——config 是部分记录，声明是自愿的检查。** 未填字段是一等
 状态（不是 `#f`、不是哨兵）；`resolve` 之后仍可以有未填（`noneager`）。
