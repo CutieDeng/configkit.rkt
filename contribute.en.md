@@ -20,13 +20,15 @@ everything.
 | `config.rkt` | Kernel: definition, composition, resolution | `define-config`, `config`, `resolve`, the query surface (`resolved-*`, `provenance-ref`), verdict constructors (`fail`/`warn`/`skip`) |
 | `loader.rkt` | The `.config` grammar: parsing + sandbox + containment checks | `load-config`, `current-config-search-heads`, `current-config-registry` |
 | `validators.rkt` | Declarative check combinators (rich verdicts built in, injected into the `.config` sandbox) | `one-of`, `integer-between`, `require-filled`, ... |
+| `probe.rkt` | Host probing: the single explicitly impure step; the probe record is a first-class value | `probe-fields`, `make-probes`, `probes-set`, `with-probes` |
+| `render.rkt` | Render driver: three writer implementations, delimited-continuation suspend/resume of the failure path | `call-renderer`, `make-file-writer`, `make-string-writer`, `no-op-writer` |
 | `record.rkt` | Read recording, canonical `.rktd` reports, human-facing expansion | `make-recording-source`, `make-report`, `explain-resolved` |
 | `debug.rkt` | Application-side dev helpers (thin veneers over the query surface, zero new mechanism) | `peek`, `peek-field`, `check-config`, `debug-consume`, `list-configs` |
 | `main.rkt` | One-stop re-export | — |
 
-Planned (interfaces settled, not started): `probe.rkt` (probe records) and
-`render.rkt` (writer interface, suspend/resume of failure paths via delimited
-continuations); design in `docs/render-flow.md`.
+All modules are implemented; the annotated render tier stays
+application-side for now (it enters the library once the
+provenance→comment injector generalizes), design in `docs/render-flow.md`.
 
 ### The principle behind each module
 
@@ -55,11 +57,14 @@ chain (changing an inherited value requires `override`); `(config a b)` is
 parallel unification (unordered, commutative; same field with different
 concrete values = conflict error, and **there is no force** — fix the source
 or demote one side to a `default`). The resolution pipeline has five gated
-stages: merge → ① immediate validation → ② computed defaults (lazy, with
-cycle detection; a field on a detected cycle is poisoned and never gets a
-value) → ③ per-field posterior validation → ④ global posterior validation.
-Errors within a stage **accumulate and report all at once**; a stage with
-errors gates all later stages; collected warnings are always kept. The
+stages: merge → ① computed defaults (lazy, with cycle detection; a field on
+a detected cycle is poisoned and never gets a value) → ② immediate
+validation → ③ per-field posterior validation → ④ global posterior
+validation. ① precedes ② — validate is a contract on a field's **final**
+value, so computed values face their validators exactly like provided ones;
+① and ② form one accumulation group (a computed failure degrades to an
+entry and never masks the validation of its inputs, or vice versa). A stage
+with errors gates all later stages; collected warnings are always kept. The
 semantic layer never pushes: provenance, read sets, and skipped validators
 are passive records — query what you need.
 
@@ -77,6 +82,34 @@ configuration data** (no self-privilege-escalation): the loader holds them,
 the host registers them, downstream configs can use but never extend them.
 Fake heads and registry rebinding are exactly the test-injection mechanism —
 reroot at the data layer, never stub at the code layer.
+
+**`probe.rkt` — impurity in one place; the record is a first-class value.**
+`resolve` stays pure and merely carries the declared probers
+(`resolved-probers`); `probe-fields` is the single explicitly impure step
+(custodian fence, timestamps, failure is data, never an interrupt). A field
+is probed iff it is unfilled AND declares `(probe p)` — **there is no marker
+value**: an explicit value beats probing, `removed` re-opens it, the same
+design move as "unfilled borrows no sentinel value". Injection =
+`make-probes` fake records / `probes-set` half-real updates — still
+rerooting at the data layer; `.config` must not declare probers (trusted
+host code, outside the sandbox). Posterior validators act as environment
+evaluators: `resolve #:probes` injects the record, `config-probe-ref`
+queries it (the pure half cannot); the purity promise becomes "same
+(config, probe record) always yields the same result", with the typical
+two-pass flow pure-resolve → probe → re-resolve with the record.
+
+**`render.rkt` — the failure path completes in one pass; partial products
+must die.** Checked mode suspends at the first unfilled read via a
+delimited continuation: delete the half-written product, swap the writer to
+a no-op, flip the policy to "record and continue", resume with a
+placeholder — the prefix is never redone and every missing field is
+collected at once. The write sink and the policy bit live in boxes shared
+across the prompt boundary; a parameter-based sink is workable but carries
+positional preconditions (pitfall 14) — the box makes the invariant
+structural and keeps the sink dead after failure even for escaped
+closures. Lenient is the default tier (the severity norm); reads with an
+explicit `fail` argument keep the ordinary ref contract — the engine's
+policy only governs reads that did not state one.
 
 **`validators.rkt` — rich verdicts; guess for the user.** A validator
 returns `#t`/`(void)` to pass, `(fail #:reason ... #:expected ... #:given
@@ -176,6 +209,14 @@ a gap in the kernel's query surface — fill the query surface first.
     whose value happens to be `'<unfilled>` cannot be confused.
 13. **`config.rkt`'s `fail` collides with rackunit's**: in tests, write
     `(require (except-in rackunit fail) ...)`.
+14. **Swapping the render sink is position-sensitive**: a parameter-held
+    writer works, but only with the binding outside the prompt and the
+    swap expressed as a parameterize wrapped around the resume — a binding
+    inside the captured extent bounces back when the continuation is
+    resumed, and a parameterize swap only covers the resumed extent, never
+    escaped closures. The library uses boxes shared across the prompt
+    boundary: the invariant is structural, and the sink stays globally
+    dead after failure (render-test carries both regression cases).
 
 ## 4. Development loop
 

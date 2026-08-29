@@ -17,6 +17,7 @@
 (require racket/sandbox
          "config.rkt"
          "validators.rkt"
+         (only-in "probe.rkt" config-probe-ref)
          (only-in "source.rkt" config-source-ref))
 
 (provide current-config-search-heads
@@ -143,7 +144,8 @@
         (cons 'require-filled require-filled)
         (cons 'warn-unfilled warn-unfilled)
         (cons 'require-known require-known)
-        (cons 'warn-unknown warn-unknown)))
+        (cons 'warn-unknown warn-unknown)
+        (cons 'config-probe-ref config-probe-ref)))
 
 (define (make-config-evaluator)
   (parameterize ([sandbox-output 'string]
@@ -199,10 +201,11 @@
   (normalize-value d))
 
 (define (parse-config-props who ev props-stx)
-  ;; -> (values flags default validators probe help)
+  ;; -> (values flags default validators help)
   (define flags '())
   (define default #f)
   (define validators '())
+  (define help #f)
   (for ([p (in-list (syntax->list props-stx))])
     (define d (syntax->datum p))
     (cond
@@ -225,10 +228,22 @@
                                              (stx-loc p))
                           (stx-loc p))
                    validators))]
+      [(and (pair? d) (eq? (car d) 'probe))
+       ;; Probers are trusted host code running outside the sandbox; a
+       ;; .config file must not supply them.
+       (raise-arguments-error who
+                              "(probe ...) 仅限代码侧配置（探测器是宿主受信代码，不经沙箱）"
+                              "at" (stx-loc p))]
+      [(and (pair? d) (eq? (car d) 'help))
+       (define s (cadr d))
+       (unless (string? s)
+         (raise-arguments-error who "(help ...) takes a string literal"
+                                "at" (stx-loc p)))
+       (set! help s)]
       [else
        (raise-arguments-error who "unknown property in .config"
                               "at" (stx-loc p) "property" d)]))
-  (values flags default (reverse validators)))
+  (values flags default (reverse validators) help))
 
 (define (parse-config-file who path)
   ;; -> (values parent-ref global-validators rows)  rows: (cons field entry)
@@ -281,7 +296,7 @@
          (raise-arguments-error who
                                 "the property group must be a parenthesized list"
                                 "at" (stx-loc (car xs))))
-       (define-values (flags default validators)
+       (define-values (flags default validators help)
          (parse-config-props who ev props))
        (define value
          (and (= (length row) 3)
@@ -305,6 +320,7 @@
                                      #:value value
                                      #:default default
                                      #:validators validators
+                                     #:help help
                                      #:srcloc (stx-loc (car xs))))
                    rows))
        (loop (cdr xs))]))

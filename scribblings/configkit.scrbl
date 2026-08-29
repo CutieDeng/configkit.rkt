@@ -21,8 +21,9 @@
  @item{两种组合：@racket[#:extends] 继承链（链内改值须 @racket[override]）；
        @racket[(config a b ...)] 并列（无序可交换，具体值冲突即错，无 force）。}
  @item{六轴默认：@racket[{introduce override}]、singlenew、open、noneager。}
- @item{求解管线五段带门控：合并 → 立即验证 → 计算默认 → 字段后验 → 全局后验；
-       阶段内错误累积一次报全，阶段出错后续不跑，警告全保留。}
+ @item{求解管线五段带门控：合并 → 计算默认 → 立即验证 → 字段后验 → 全局后验；
+       计算默认与立即验证同组累积（终值一律过验证器，计算失败不遮蔽对其
+       输入的验证），阶段出错后续不跑，警告全保留。}
  @item{语义层不推送：provenance、读集、未读字段、跳过的验证器皆为被动记录，按需查询。}]
 
 @section{内核（configkit/config）}
@@ -42,9 +43,13 @@
 @defproc[(config [part (or/c config-object? hash? any/c)] ...) any/c]{
 并列组合。@racket[hash] 被强转为最宽松声明的匿名 config（provenance 降为整体粒度）。}
 
-@defproc[(resolve [composition any/c]) resolved?]{
+@defproc[(resolve [composition any/c]
+                  [#:probes probes (or/c probe-record? #f) #f]) resolved?]{
 求解：合一、六轴检查、验证管线、provenance。错误累积于
-@racket[resolved-issues]，警告于 @racket[resolved-warnings]，从不抛出配置类错误。}
+@racket[resolved-issues]，警告于 @racket[resolved-warnings]，从不抛出配置类
+错误。@racket[#:probes] 注入探测记录供后验验证器经
+@racket[config-probe-ref] 查询（环境求值器）；纯性承诺相应为
+"同一（配置, 探测记录）恒得同一结果"。}
 
 @deftogether[(@defproc[(resolved? [v any/c]) boolean?]
               @defproc[(resolved-ok? [r resolved?]) boolean?]
@@ -54,7 +59,10 @@
               @defproc[(resolved-warnings [r resolved?]) (listof issue?)]
               @defproc[(resolved-skipped [r resolved?]) list?]
               @defproc[(resolved-id [r resolved?]) (or/c symbol? (listof symbol?))]
-              @defproc[(resolved-class [r resolved?]) any/c])]{
+              @defproc[(resolved-class [r resolved?]) any/c]
+              @defproc[(resolved-probers [r resolved?]) hash?]
+              @defproc[(resolved-probes [r resolved?])
+                       (or/c probe-record? #f)])]{
 查询面。@racket[resolved-ok?] 只看错误，警告不阻断。
 
 @racket[resolved-id] 与 @racket[resolved-class] 分属两个层面，勿混：
@@ -147,6 +155,77 @@ did-you-mean 提示。准则：@bold{建议缺省用警告版}（@racket[warn-un
 装载零执行：值位只读；封闭位置在 @racketmodname[racket/sandbox] 内求值，
 闭包调用期重入沙箱。头表与注册表由宿主持有，非配置数据。}
 
+@section{宿主探测（configkit/probe）}
+
+@deftogether[(@defproc[(probe-fields [r resolved?]) probe-record?]
+              @defproc[(probe-record? [v any/c]) boolean?]
+              @defproc[(probe-record-fields [pr probe-record?]) (listof symbol?)]
+              @defproc[(probe-record-failures [pr probe-record?]) list?]
+              @defproc[(probe-ref [pr probe-record?] [field symbol?]
+                                  [fail any/c source-missing]) any/c]
+              @defproc[(config-probe-ref [r resolved?] [field symbol?]
+                                         [fail any/c source-missing]) any/c]
+              @defproc[(make-probes [m (or/c hash? list?)]
+                                    [#:prober prober symbol? 'injected]
+                                    [#:at at real? 0]) probe-record?]
+              @defproc[(probes-set [pr probe-record?] [field symbol?]
+                                   [value any/c]
+                                   [#:prober prober symbol? 'injected]
+                                   [#:at at real? 0]) probe-record?]
+              @defproc[(with-probes [src config-source?] [pr probe-record?])
+                       config-source?])]{
+@racket[resolve] 保持纯，只携带各字段声明的探测器（@racket[(probe p)]
+属性；@racket[resolved-probers] 查询）；@racket[probe-fields] 是唯一的
+显式不纯步：对@bold{未填且有探测器}的字段逐个执行探测器（custodian
+围栏、时刻戳、失败降级为记录条目而非中断）。没有标记值：显式值天然
+压过探测，@racket[removed] 掩值即重开探测。探测记录是一等值——
+@racket[make-probes] 手工构造假记录注入，@racket[probes-set] 函数式
+更新（半真半假），@racket[with-probes] 包装任意源使探测值走普通 ref
+路径（消费者免改；recording 叠在外层），@racket[make-report] 的
+@racket[#:probes] 归档为 @racket['probes]/@racket['probe-failures] 键。
+@filepath{.config} 不得声明 @racket[(probe ...)]：探测器是宿主受信
+代码，不经沙箱。
+
+后验验证器作@bold{环境求值器}：@racket[(resolve _ #:probes pr)] 注入
+记录，验证器经 @racket[config-probe-ref] 查询（镜像
+@racket[config-env-ref]；无记录时缺失，验证器典型地自决 @racket[skip]；
+计算默认所在的纯半段不可查）。典型两段式：纯求解 → 实探/注入 →
+带记录复解——@racket[call-renderer] 对未求解输入自动走这条路。}
+
+@section{渲染驱动（configkit/render）}
+
+@deftogether[(@defproc[(call-renderer [c any/c] [renderer procedure?]
+                                      [#:mode mode (or/c 'lenient 'checked) 'lenient]
+                                      [#:writer w (or/c render-writer? #f) #f]
+                                      [#:probes pr (or/c probe-record? #f) #f]
+                                      [#:function function symbol? 'render])
+                       render-result?]
+              @defstruct*[render-result ([verdict (or/c 'ok 'failed)]
+                                         [product any/c]
+                                         [report hash?]) #:omit-constructor]
+              @defproc[(make-string-writer) render-writer?]
+              @defproc[(make-file-writer [path path-string?]) render-writer?]
+              @defproc[(no-op-writer) render-writer?]
+              @defproc[(render-writer? [v any/c]) boolean?]
+              @defproc[(unfilled-placeholder [field symbol?]) unfilled-placeholder?]
+              @defproc[(unfilled-placeholder? [v any/c]) boolean?])]{
+渲染驱动：应用的渲染器只经协议取值、经 writer 发文本
+（@racket[(renderer src emit)]，三元额外收 record），驱动负责失败路径。
+探测记录缺省当场实探，@racket[#:probes] 注入假记录。
+
+宽档（缺省，同严重度准则）：未填读取返回占位对象
+（格式化为 @litchar{<unfilled:字段>}），verdict 恒 @racket['ok]，缺失入
+报告。严档 @racket['checked]：首个未填读取处捕获可组合续延挂起——驱动
+删除半成品、writer 换 no-op、策略翻"记录并继续"——以占位恢复，渲染器
+@bold{单遍}跑完剩余模板：完整读集与全部缺失一次收齐，前缀不重做，
+且绝不留下半成品。调用方显式传 @racket[fail] 参数的读取保留普通 ref
+契约，不触发挂起。
+
+实现纪律：写出接口与策略位在跨提示符共享的 box 中。parameter 方案可行
+但位置敏感——绑定须在提示符之外、换挡须以包裹恢复表达，绑定落入被捕获
+范围即被弹回，且换挡不覆盖逃逸闭包；box 使不变式结构化、失败后写出口
+全局死透。annotated 档暂留应用侧。}
+
 @section{记录与报告（configkit/record）}
 
 @deftogether[(@defproc[(make-recording-source [s config-source?])
@@ -184,7 +263,8 @@ did-you-mean 提示。准则：@bold{建议缺省用警告版}（@racket[warn-un
 @deftogether[(@defproc[(make-report [#:function function symbol?]
                                     [#:resolved r (or/c resolved? #f) #f]
                                     [#:record rec (or/c record? #f) #f]
-                                    [#:source s (or/c config-source? #f) #f]) hash?]
+                                    [#:source s (or/c config-source? #f) #f]
+                                    [#:probes pr (or/c probe-record? #f) #f]) hash?]
               @defproc[(write-report [report hash?] [path path-string?]) path?]
               @defthing[report-format-version exact-integer?]
               @defproc[(explain-resolved [r resolved?]) string?]

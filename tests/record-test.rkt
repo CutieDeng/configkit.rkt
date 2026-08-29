@@ -50,7 +50,7 @@
   [bad ((validate (lambda (v) "总是失败"))) 1])
 (define r2 (resolve failing))
 (define report (make-report #:function 'resolve #:resolved r2))
-(check-equal? (hash-ref report 'format-version) 1)
+(check-equal? (hash-ref report 'format-version) 2)
 (check-eq? (hash-ref report 'kind) 'resolve-report)
 (check-eq? (hash-ref report 'verdict) 'failed)
 

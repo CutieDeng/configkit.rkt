@@ -17,12 +17,14 @@
 | `config.rkt` | 内核：定义、组合、求解 | `define-config`、`config`、`resolve`、查询面（`resolved-*`、`provenance-ref`）、裁决构造子（`fail`/`warn`/`skip`） |
 | `loader.rkt` | `.config` 文法：解析 + 沙箱 + 包含检查 | `load-config`、`current-config-search-heads`、`current-config-registry` |
 | `validators.rkt` | 声明检查组合子（富裁决内建，注入 `.config` 沙箱） | `one-of`、`integer-between`、`require-filled`、... |
+| `probe.rkt` | 宿主探测：唯一显式不纯步，探测记录一等值 | `probe-fields`、`make-probes`、`probes-set`、`with-probes` |
+| `render.rkt` | 渲染驱动：writer 三实现、失败路径的定界续延挂起/恢复 | `call-renderer`、`make-file-writer`、`make-string-writer`、`no-op-writer` |
 | `record.rkt` | 读取记录、`.rktd` 规范形报告、人类可读展开 | `make-recording-source`、`make-report`、`explain-resolved` |
 | `debug.rkt` | 应用态调测（全部是查询面的薄封装，零新机制） | `peek`、`peek-field`、`check-config`、`debug-consume`、`list-configs` |
 | `main.rkt` | 一站式 re-export | — |
 
-规划中（接口定稿、未动工）：`probe.rkt`（探测记录）、`render.rkt`
-（writer 接口、失败路径的定界续延挂起/恢复），设计见 `docs/render-flow.md`。
+全部模块已实现；annotated 渲染档暂留应用侧（provenance→注释注入器
+通用化后入库），设计见 `docs/render-flow.md`。
 
 ### 各模块的核心原则
 
@@ -42,9 +44,11 @@
 两种组合关系语义不同：`#:extends` 是链（链内改值必须 `override`）；
 `(config a b)` 是并列合一（无序可交换，同字段不同值 = 冲突报错，
 **没有 force**——要改就改源头或一方降级为 `default`）。
-求解管线五段带门控：合并 → ①立即验证 → ②计算默认（惰性 + 循环检测，
-循环字段被毒化不回填值）→ ③字段后验 → ④全局后验；阶段内错误**累积一次
-报全**，某阶段有错则后续阶段不跑，已收警告全保留。语义层不推送：
+求解管线五段带门控：合并 → ①计算默认（惰性 + 循环检测，循环字段被毒化
+不回填值）→ ②立即验证 → ③字段后验 → ④全局后验；①在②前——validate
+是字段**终值**的契约，计算值与提供值同样受检；①②同组累积（计算失败
+降级为条目，不遮蔽对其输入的验证，反之亦然），阶段出错后续不跑，
+已收警告全保留。语义层不推送：
 provenance、读集、跳过的验证器都是被动记录，要什么自己查。
 
 **`loader.rkt`——解析，零执行。** `.config` 文法没有顶层代码位置；值位是
@@ -56,6 +60,24 @@ provenance、读集、跳过的验证器都是被动记录，要什么自己查�
 头表与注册表**不属于配置数据**（防自提权），加载器持有、宿主注册，
 下游配置只能使用不能扩表。假根（fake 头）与注册表换绑即是测试注入机制
 ——数据层换根，不在代码层打桩。
+
+**`probe.rkt`——不纯性集中一处，记录是一等值。** `resolve` 纯、只携带
+探测器（`resolved-probers`）；`probe-fields` 是唯一显式不纯步（custodian
+围栏、时刻戳、失败是数据不是中断）。探测判定 = 未填 ∧ 声明了 `(probe p)`，
+**没有标记值**——显式值压过探测、`removed` 掩值重开探测，与"未填不借助
+哨兵值"是同一个设计动作。注入 = `make-probes` 假记录 / `probes-set`
+半真半假，仍是数据层换根；`.config` 不得声明探测器（宿主受信代码，
+不经沙箱）。后验验证器作环境求值器：`resolve #:probes` 注入、
+`config-probe-ref` 查询（纯半段不可查）；纯性承诺相应为"同一
+（配置, 探测记录）恒得同一结果"，典型两段式 = 纯求解→实探→带记录复解。
+
+**`render.rkt`——失败路径单遍完成，半成品必须死。** 严档在首个未填读取
+处以定界续延挂起：删半成品、writer 换 no-op、策略翻"记录并继续"、占位
+恢复——前缀不重做，缺失一次收齐。写出接口与策略位在跨提示符共享的 box
+中；parameter 方案并非不可行，但有位置性前提（陷阱清单第 14 条），
+box 使不变式结构化且失败后写出口对逃逸闭包也死透。宽档是缺省档
+（同严重度准则）；显式 `fail` 参数的读取保留普通 ref 契约，引擎策略
+只接管"未表态"的读取。
 
 **`validators.rkt`——富裁决，帮用户猜。** 验证器返回 `#t`/`(void)` 通过，
 `(fail #:reason ... #:expected ... #:given ... #:hint ...)` 失败，可返回
@@ -126,6 +148,11 @@ provenance（值来自哪行 + 验证器来自哪行）。读取记录三类条�
     值恰为 `'<unfilled>` 的字段不会混淆。
 13. **`config.rkt` 的 `fail` 与 rackunit 撞名**：测试里写
     `(require (except-in rackunit fail) ...)`。
+14. **渲染写出口的换挡是位置敏感的**：writer 放 parameter 可行，但绑定
+    必须在提示符之外、换挡必须以"包裹恢复"的 parameterize 表达——绑定
+    落入被捕获范围即被恢复的续延弹回；且 parameterize 换挡只覆盖被恢复
+    的动态范围，对逃逸闭包不生效。库选跨提示符共享的 box：不变式结构化，
+    失败后写出口全局死透（render-test 有弹回与逃逸两个回归用例）。
 
 ## 4. 开发环
 

@@ -10,7 +10,8 @@
 (require racket/generic
          racket/set
          "source.rkt"
-         "config.rkt")
+         "config.rkt"
+         "probe.rkt")
 
 (provide explain-resolved
          explain-issue
@@ -30,7 +31,9 @@
          write-report
          report-format-version)
 
-(define report-format-version 1)
+;; v2: 'unfilled-reads became a roster, added 'id/'class/'marks/'flags,
+;; 'values carries filled fields only, added 'probes/'probe-failures.
+(define report-format-version 2)
 
 ;; ---------------------------------------------------------------------------
 ;; Recording source
@@ -164,7 +167,8 @@
 (define (make-report #:function function
                      #:resolved [r #f]
                      #:record [rec #f]
-                     #:source [source #f])
+                     #:source [source #f]
+                     #:probes [pr #f])
   (define base
     (hash 'format-version report-format-version
           'kind (if rec 'consumer-report 'resolve-report)
@@ -198,16 +202,31 @@
                                 #:when (pair? (provenance-ref r k)))
                        (values k (map sanitize-origin (provenance-ref r k))))))
         base))
-  (if rec
-      (hash-set* with-resolved
-                 'read-set (record-reads rec)
-                 'unfilled-reads (sanitize (record-unfilled rec))
-                 'notes (sanitize (record-notes rec))
-                 'marks (sanitize (record-marks rec))
-                 'flags (sanitize (record-flags rec))
-                 'unread-fields
-                 (if source (unread-fields/record source rec) '()))
-      with-resolved))
+  (define with-record
+    (if rec
+        (hash-set* with-resolved
+                   'read-set (record-reads rec)
+                   'unfilled-reads (sanitize (record-unfilled rec))
+                   'notes (sanitize (record-notes rec))
+                   'marks (sanitize (record-marks rec))
+                   'flags (sanitize (record-flags rec))
+                   'unread-fields
+                   (if source (unread-fields/record source rec) '()))
+        with-resolved))
+  (if pr
+      (hash-set* with-record
+                 'probes
+                 (for/hash ([(f e) (in-hash (probe-record-entries pr))])
+                   (values f (hash 'value (sanitize (probe-entry-value e))
+                                   'at (probe-entry-at e)
+                                   'prober (probe-entry-prober e))))
+                 'probe-failures
+                 (for/list ([pf (in-list (probe-record-failures pr))])
+                   (hash 'field (probe-failure-field pf)
+                         'reason (probe-failure-reason pf)
+                         'at (probe-failure-at pf)
+                         'prober (probe-failure-prober pf))))
+      with-record))
 
 ;; ---------------------------------------------------------------------------
 ;; Human-facing expansion: the derived view of the same data

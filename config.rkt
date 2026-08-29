@@ -31,6 +31,8 @@
          resolved-value
          resolved-id
          resolved-class
+         resolved-probers
+         resolved-probes
          resolved-skipped
          unfilled-fields
          inoperative-declarations
@@ -349,6 +351,10 @@
     warnings     ; (listof issue), never blocking
     skipped      ; (listof (list field kind srcloc reason))
     explicit     ; seteq of fields with a non-default provider
+    probers      ; hash field -> declared prober proc; carried, never run by
+                 ; resolve — probe-fields (probe.rkt) is the impure step
+    probes       ; probe record injected via (resolve _ #:probes pr), or #f;
+                 ; posterior validators query it through config-probe-ref
     id)          ; root config name, or (listof name) for parallel roots.
                  ; id is NOT a field: it lives outside the field space, never
                  ; unifies, never inherits through #:extends, and is untouched
@@ -460,7 +466,7 @@
             [else (list (config-object-name n))])))
   (if (null? (cdr names)) (car names) names))
 
-(define (resolve composition)
+(define (resolve composition #:probes [probes #f])
   (define top (->config composition 'resolve))
   (define nodes (all-nodes top))
   (define issues '())      ; errors: gate the pipeline stage by stage
@@ -484,6 +490,7 @@
   (define unfilled-out (make-hasheq))
   (define env-set (mutable-seteq))
   (define explicit-set (mutable-seteq))
+  (define probers-out (make-hasheq))
   (define post-validators '())   ; (list field vdecl)
   (define immediate-validators '())
 
@@ -504,6 +511,12 @@
       (for/or ([ne (in-list touching)]) (entry-required? (cdr ne))))
     (when (for/or ([ne (in-list touching)]) (entry-env? (cdr ne)))
       (set-add! env-set field))
+    ;; Declared prober, nearest node first (child shadows ancestor, mirroring
+    ;; the in-chain entry merge).
+    (let ([prober (for/first ([ne (in-list touching)]
+                              #:when (entry-probe (cdr ne)))
+                    (entry-probe (cdr ne)))])
+      (when prober (hash-set! probers-out field prober)))
     (for ([ne (in-list touching)])
       (for ([vd (in-list (entry-validators (cdr ne)))])
         (if (eq? (vdecl-kind vd) 'post)
@@ -672,11 +685,14 @@
     (hash-set! origins-out field (reverse origins)))
 
   ;; Stage gating: a stage runs to completion (warnings and errors both
-  ;; accumulate within it); once a stage has produced errors, later stages do
-  ;; not run.  Warnings collected so far are all retained.
+  ;; accumulate within it); once a stage has produced errors, later stages
+  ;; do not run.  Warnings collected so far are all retained.  Phases ①
+  ;; (computed defaults) and ② (immediate validation) form ONE accumulation
+  ;; group gated on the merge alone — a computed failure must not mask the
+  ;; validation of its inputs, and vice versa.
+  (define merge-clean? (stage-clean?))
 
-  ;; Phase ①: immediate validators, on fields that ended with a value.
-  ;; (Failure attribution mirrors the posterior phases; see with-context below.)
+  ;; Failure attribution, shared by the validation phases (see with-context).
   (define (attributed-issue! field vd)
     (lambda (i)
       (define d0 (issue-data i))
@@ -693,20 +709,10 @@
                                 'value-at (origin-srcloc o))
                      d1))
       (struct-copy issue i [data d2])))
-  (when (stage-clean?)
-    (for ([fv (in-list (reverse immediate-validators))])
-      (define field (car fv))
-      (define vd (cadr fv))
-      (define v (hash-ref values-out field #f))
-      (when v
-        (define enrich (attributed-issue! field vd))
-        (apply-verdict! (call-validator (vdecl-proc vd) (present-v v))
-                        field 'immediate (vdecl-srcloc vd)
-                        (compose add-issue! enrich)
-                        (compose add-warning! enrich)
-                        add-skip!))))
-
-  ;; Phase ②: computed defaults, lazily with cycle detection.  A field on
+  ;; Phase ①: computed defaults, lazily with cycle detection.  Runs BEFORE
+  ;; the immediate validators, so a computed value faces its field's
+  ;; validators exactly like a provided one — validate is a contract on the
+  ;; field's final value, whoever produced it.  A field on
   ;; which a cycle was detected is poisoned: it stays unfilled even though
   ;; the outer in-flight computation completes with fallback data — a field
   ;; must not simultaneously carry a computed-cycle issue and a value.
@@ -750,13 +756,28 @@
                                                 #f)))))))))
   (set-box! (resolved-view-force-box view) force-field!)
   (cond
-    [(stage-clean?)
+    [merge-clean?
      (for ([field (in-list fields)]) (force-field! field))]
     [else
      ;; Gated: computed defaults never ran; normalize their pending markers.
      (for ([(field reason) (in-hash unfilled-out)]
            #:when (eq? reason 'computed-pending))
        (hash-set! unfilled-out field 'computed-skipped))])
+
+  ;; Phase ②: immediate validators, on every field that ended with a value
+  ;; — provided or computed alike.
+  (when merge-clean?
+    (for ([fv (in-list (reverse immediate-validators))])
+      (define field (car fv))
+      (define vd (cadr fv))
+      (define v (hash-ref values-out field #f))
+      (when v
+        (define enrich (attributed-issue! field vd))
+        (apply-verdict! (call-validator (vdecl-proc vd) (present-v v))
+                        field 'immediate (vdecl-srcloc vd)
+                        (compose add-issue! enrich)
+                        (compose add-warning! enrich)
+                        add-skip!))))
 
   ;; Phase ③/④: posterior validators (field, then global).
   ;; Failure attribution: issues and warnings from a validator carry the
@@ -773,7 +794,8 @@
 
   (define result
     (resolved values-out origins-out unfilled-out env-set
-              '() '() '() explicit-set (composition-id top)))
+              '() '() '() explicit-set probers-out probes
+              (composition-id top)))
   (define (run-post! field vd)
     (apply-verdict! (call-validator (vdecl-proc vd) result)
                     field 'post (vdecl-srcloc vd)

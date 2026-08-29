@@ -333,6 +333,31 @@
 (check-eq? (config-source-suite (resolve no-suite)) 'unknown)
 
 ;; ---------------------------------------------------------------------------
+;; 管线重排：计算默认（①）在立即验证（②）之前完成——终值一律过验证器
+
+;; 计算出的值违反本字段 validate → 报错（旧序下静默漏过），归因 computed
+(define-config computed-checked
+  [copies  ((default 2))]
+  [build-n ((default (lambda (v) (* 64 (config-source-ref v 'copies))))
+            (validate (lambda (n) (or (<= n 100) "超出上限"))))])
+(define rcv (resolve computed-checked))
+(check-false (resolved-ok? rcv))
+(check-true (has-issue? rcv 'validator-failed 'build-n))
+(check-true (for/or ([i (in-list (resolved-issues rcv))])
+              (and (eq? (issue-field i) 'build-n)
+                   (eq? (hash-ref (issue-data i) 'value-from #f)
+                        'computed-checked))))
+
+;; ①②同组累积：垃圾输入使 lambda 崩溃（①）与垃圾自身的验证错（②）都报，
+;; 互不遮蔽
+(define-config garbage-base
+  [copies  ((default 2) (validate exact-integer?))]
+  [build-n ((default (lambda (v) (* 2 (config-source-ref v 'copies)))))])
+(define rgb (resolve (config garbage-base (hash 'copies "banana"))))
+(check-true (has-issue? rgb 'computed-default-failed 'build-n))
+(check-true (has-issue? rgb 'validator-failed 'copies))
+
+;; ---------------------------------------------------------------------------
 ;; id / class：自我声明（调试与报告输出）
 
 ;; id = 求解根的名字，不随链继承：job 的 resolved 自报 job，不是 base/site
