@@ -115,7 +115,10 @@ positional preconditions (pitfall 14) — the box makes the invariant
 structural and keeps the sink dead after failure even for escaped
 closures. Lenient is the default tier (the severity norm); reads with an
 explicit `fail` argument keep the ordinary ref contract — the engine's
-policy only governs reads that did not state one.
+policy only governs reads that did not state one, and so does the verdict:
+checked fails only on unhandled unfilled reads, while a read that stated
+its policy belongs to the consumer's own verdict (`record-flag!` soft
+warnings).
 
 **`validators.rkt` — rich verdicts; guess for the user.** A validator
 returns `#t`/`(void)` to pass, `(fail #:reason ... #:expected ... #:given

@@ -157,11 +157,12 @@
              (renderer psrc emit rec)
              (renderer psrc emit))))
   (define product (and (not (unbox aborted?)) ((render-writer-finish wr))))
+  ;; checked fails on UNHANDLED unfilled reads only (the abort path).  A
+  ;; read with an explicit fail argument stated its own policy — its
+  ;; verdict belongs to the consumer (record-flag!), not to the engine;
+  ;; the unfilled-read roster still carries it for audit.
   (define verdict
-    (if (and (eq? mode 'checked)
-             (or (unbox aborted?) (pair? (record-unfilled rec))))
-        'failed
-        'ok))
+    (if (and (eq? mode 'checked) (unbox aborted?)) 'failed 'ok))
   (render-result verdict product
                  (make-report #:function function #:resolved r
                               #:record rec #:source r #:probes probes)))

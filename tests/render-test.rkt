@@ -109,14 +109,40 @@
            'injected)
 
 ;; ---------------------------------------------------------------------------
-;; 显式 fail 参数保留普通 ref 契约（绕过引擎策略，不挂起）；缺失仍在案
+;; 显式 fail 参数保留普通 ref 契约：消费者已表态的读取归消费者裁决——
+;; 严档不判败、产物完成，未填读取名单仍如实在档
 
 (define res6 (call-renderer r
                (lambda (src emit)
                  (emit (format "~a" (config-source-ref src 'hw-avail "N/A"))))
                #:mode 'checked))
-(check-eq? (render-result-verdict res6) 'failed)
+(check-eq? (render-result-verdict res6) 'ok)
 (check-equal? (render-result-product res6) "N/A")
+(check-equal? (hash-ref (render-result-report res6) 'unfilled-reads)
+              '(hw-avail))
+
+;; 软警告方案端到端：显示字段显式 fail + record-flag!（缺省警告级），
+;; 严档 verdict ok；同一渲染器再走缺省路径读未填 → 才挂起判败
+(define (soft-ref src rec field)
+  (config-source-ref src field
+                     (lambda ()
+                       (record-flag! rec field "显示字段未填，渲染为 TODO")
+                       "TODO")))
+(define res9 (call-renderer r
+               (lambda (src emit rec)
+                 (emit (format "hw = ~a\n" (soft-ref src rec 'hw-avail))))
+               #:mode 'checked))
+(check-eq? (render-result-verdict res9) 'ok)
+(check-regexp-match #rx"hw = TODO" (render-result-product res9))
+(check-equal? (hash-ref (render-result-report res9) 'flags)
+              '((hw-avail warning "显示字段未填，渲染为 TODO")))
+(define res10 (call-renderer r
+                (lambda (src emit rec)
+                  (emit (format "hw = ~a\n" (soft-ref src rec 'hw-avail)))
+                  (config-source-ref src 'sw-avail))    ; 未表态 → 硬
+                #:mode 'checked))
+(check-eq? (render-result-verdict res10) 'failed)
+(check-false (render-result-product res10))
 
 ;; ---------------------------------------------------------------------------
 ;; 逃逸的 emit 在失败后保持死透——box 换挡是全局的，parameterize 换挡
