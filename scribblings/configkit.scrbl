@@ -63,7 +63,9 @@
               @defproc[(resolved-class [r resolved?]) any/c]
               @defproc[(resolved-probers [r resolved?]) hash?]
               @defproc[(resolved-probes [r resolved?])
-                       (or/c probe-record? #f)])]{
+                       (or/c probe-record? #f)]
+              @defproc[(resolved-probe-reads [r resolved?])
+                       (listof (list/c symbol? boolean?))])]{
 查询面。@racket[resolved-ok?] 只看错误，警告不阻断。
 
 @racket[resolved-id] 与 @racket[resolved-class] 分属两个层面，勿混：
@@ -201,7 +203,13 @@ did-you-mean 提示。准则：@bold{建议缺省用警告版}（@racket[warn-un
 记录，验证器经 @racket[config-probe-ref] 查询（镜像
 @racket[config-env-ref]；无记录时缺失，验证器典型地自决 @racket[skip]；
 计算默认所在的纯半段不可查）。典型两段式：纯求解 → 实探/注入 →
-带记录复解——@racket[call-renderer] 对未求解输入自动走这条路。}
+带记录复解——@racket[call-renderer] 对未求解输入自动走这条路。
+
+@bold{查询被感知}：@racket[config-probe-ref] 的每次查询（含未命中）记入
+resolved 的首查序名单（@racket[resolved-probe-reads]，条目为
+@racket[(list 字段 命中?)]），报告归档为 @racket['probe-reads] 与
+@racket['probe-misses]——沙箱验证器的查询同样被看见。结果固定
+（记录即缓存），查询本身是数据。}
 
 @section{渲染驱动（configkit/render）}
 

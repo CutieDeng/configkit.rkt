@@ -135,6 +135,16 @@
 (check-true (resolved-ok?
              (resolve env-checked #:probes (make-probes (hash 'host-cores 16)))))
 
+;; 查询被感知：config-probe-ref 的查询入名单（首查序、含未命中），进报告
+(check-equal? (resolved-probe-reads re0) '((host-cores #f)))   ; 无记录 → 未命中
+(check-equal? (resolved-probe-reads re1) '((host-cores #t)))
+(define rep-q (make-report #:function 'resolve #:resolved re1))
+(check-equal? (hash-ref rep-q 'probe-reads) '(host-cores))
+(check-equal? (hash-ref rep-q 'probe-misses) '())
+(check-equal? (hash-ref (make-report #:function 'resolve #:resolved re0)
+                        'probe-misses)
+              '(host-cores))
+
 ;; 纯半段（计算默认）不得查探测：view 上调用即契约错，降级为记录条目
 (define-config probe-in-computed
   [x ((default (lambda (v) (config-probe-ref v 'k 0))))])
@@ -168,8 +178,17 @@
 (w! "jobs/has-probe.config" "[x ((probe (lambda (r) 1)))]\n")
 (w! "jobs/has-help.config" "[x ((help \"副本数\") (default 2))]\n")
 (w! "jobs/bad-help.config" "[x ((help 3))]\n")
+(w! "jobs/probe-query.config"
+    (string-append "[y () 1]\n"
+                   "#:validate/post (lambda (cfg)\n"
+                   "  (begin (config-probe-ref cfg 'host-cores 'none) #t))\n"))
 (parameterize ([current-config-search-heads (hash 'jobs (build-path root "jobs"))])
   (check-exn #rx"仅限代码侧" (lambda () (load-config "@jobs/has-probe")))
   (check-equal? (resolved-value (resolve (load-config "@jobs/has-help")) 'x) 2)
-  (check-exn #rx"string literal" (lambda () (load-config "@jobs/bad-help"))))
+  (check-exn #rx"string literal" (lambda () (load-config "@jobs/bad-help")))
+  ;; 沙箱验证器的探测查询同样被感知
+  (define rq (resolve (load-config "@jobs/probe-query")
+                      #:probes (make-probes (hash 'host-cores 8))))
+  (check-true (resolved-ok? rq) (format "~a" (resolved-issues rq)))
+  (check-equal? (resolved-probe-reads rq) '((host-cores #t))))
 (delete-directory/files root)

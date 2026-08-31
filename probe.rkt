@@ -107,7 +107,13 @@
     (raise-argument-error 'config-probe-ref
                           "resolved (posterior phases only)" r))
   (define pr (resolved-probes r))
-  (if (probe-record? pr)
+  (define hit?
+    (and (probe-record? pr)
+         (hash-has-key? (probe-record-entries pr) field)))
+  ;; 查询本身是被感知的数据：谁查过、命中与否，入 resolved 的查询名单
+  ;; （报告 'probe-reads/'probe-misses）——沙箱验证器的查询同样被看见。
+  (resolved-record-probe-read! r field hit?)
+  (if hit?
       (probe-ref pr field fail-result)
       (cond [(procedure? fail-result) (fail-result)]
             [else fail-result])))

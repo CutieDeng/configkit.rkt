@@ -33,6 +33,8 @@
          resolved-class
          resolved-probers
          resolved-probes
+         resolved-probe-reads
+         resolved-record-probe-read!
          resolved-skipped
          unfilled-fields
          inoperative-declarations
@@ -355,6 +357,9 @@
                  ; resolve — probe-fields (probe.rkt) is the impure step
     probes       ; probe record injected via (resolve _ #:probes pr), or #f;
                  ; posterior validators query it through config-probe-ref
+    probe-reads-box  ; box of (list field hit?) newest-first, deduped —
+                 ; every config-probe-ref query is observed here, sandboxed
+                 ; validators included; queries are data, same as reads
     id)          ; root config name, or (listof name) for parallel roots.
                  ; id is NOT a field: it lives outside the field space, never
                  ; unifies, never inherits through #:extends, and is untouched
@@ -385,6 +390,15 @@
 ;; and reports.  #f when the config declares no class.
 (define (resolved-class r)
   (resolved-value r 'class #f))
+
+;; 探测查询的感知面：首查序名单，条目 (list 字段 命中?)。
+(define (resolved-probe-reads r)
+  (reverse (unbox (resolved-probe-reads-box r))))
+
+(define (resolved-record-probe-read! r field hit?)
+  (define b (resolved-probe-reads-box r))
+  (unless (assq field (unbox b))
+    (set-box! b (cons (list field hit?) (unbox b)))))
 
 (define (unfilled-fields r) (resolved-unfilled r))
 
@@ -794,7 +808,7 @@
 
   (define result
     (resolved values-out origins-out unfilled-out env-set
-              '() '() '() explicit-set probers-out probes
+              '() '() '() explicit-set probers-out probes (box '())
               (composition-id top)))
   (define (run-post! field vd)
     (apply-verdict! (call-validator (vdecl-proc vd) result)

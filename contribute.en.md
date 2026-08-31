@@ -102,7 +102,11 @@ host code, outside the sandbox). Posterior validators act as environment
 evaluators: `resolve #:probes` injects the record, `config-probe-ref`
 queries it (the pure half cannot); the purity promise becomes "same
 (config, probe record) always yields the same result", with the typical
-two-pass flow pure-resolve → probe → re-resolve with the record.
+two-pass flow pure-resolve → probe → re-resolve with the record. **Queries
+are observed**: every `config-probe-ref` call (misses included) enters the
+resolved's first-query roster, archived as `'probe-reads`/`'probe-misses`
+— sandboxed validators' queries are seen too; results stay fixed (the
+record is the cache), and the queries themselves are data.
 
 **`render.rkt` — the failure path completes in one pass; partial products
 must die.** Checked mode suspends at the first unfilled read via a

@@ -32,7 +32,8 @@
          report-format-version)
 
 ;; v2: 'unfilled-reads became a roster, added 'id/'class/'marks/'flags,
-;; 'values carries filled fields only, added 'probes/'probe-failures.
+;; 'values carries filled fields only, added 'probes/'probe-failures and
+;; the query-side 'probe-reads/'probe-misses rosters.
 (define report-format-version 2)
 
 ;; ---------------------------------------------------------------------------
@@ -195,6 +196,10 @@
                      'issues (map sanitize-issue (resolved-issues r))
                      'warnings (map sanitize-issue (resolved-warnings r))
                      'unfilled (sanitize (unfilled-fields r))
+                     'probe-reads (map car (resolved-probe-reads r))
+                     'probe-misses (for/list ([e (in-list (resolved-probe-reads r))]
+                                              #:unless (cadr e))
+                                     (car e))
                      'skipped (sanitize (resolved-skipped r))
                      'inoperative (sanitize (inoperative-declarations r))
                      'provenance
