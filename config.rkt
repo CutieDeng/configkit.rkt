@@ -57,7 +57,10 @@
 ;; including the boolean #f itself.
 (struct present (v) #:transparent)
 
-;; One field row.  perm is a non-empty subset of '(introduce override).
+;; One field row.  perm is a non-empty subset of '(introduce provide
+;; override): first declaration / first provision / changing an existing
+;; decision.  The bare group () carries all three permissions; narrowing to
+;; one is a statement of intent that buys the matching check.
 (struct entry
   (perm multi? sealed? required? eager? removed? env?
    value        ; (present v) | #f
@@ -104,7 +107,7 @@
     [(eq? v 'false) #f]
     [else v]))
 
-(define (make-entry #:perm [perm '(introduce override)]
+(define (make-entry #:perm [perm '(introduce provide override)]
                     #:multi? [multi? #f]
                     #:sealed? [sealed? #f]
                     #:required? [required? #f]
@@ -176,7 +179,7 @@
   (define (parse-prop p)
     (define d (syntax->datum p))
     (cond
-      [(memq d '(introduce override sealed required eager removed
+      [(memq d '(introduce provide override sealed required eager removed
                  multi-introducer env))
        (values d #f)]
       [(and (pair? d) (memq (car d) '(default validate validate/post probe help)))
@@ -217,8 +220,8 @@
         [(help) (set! help-e payload)]
         [else (set! flags (cons kind flags))]))
     (define perm
-      (let ([p (filter (lambda (f) (memq f '(introduce override))) flags)])
-        (if (null? p) ''(introduce override) #`'#,p)))
+      (let ([p (filter (lambda (f) (memq f '(introduce provide override))) flags)])
+        (if (null? p) ''(introduce provide override) #`'#,p)))
     (when (and value (or (memq 'required flags) (memq 'removed flags)))
       (raise-syntax-error 'define-config
                           "required/removed rows must not give a value" row-stx))
@@ -574,8 +577,37 @@
              (for*/or ([anc (in-list (chain-ancestors node))]
                        [ae (in-value (merged-entry anc field))])
                (and ae (entry-default ae) #t)))
+           ;; Any ancestor declaration at all — what a declared provide
+           ;; requires (its absence is the field-name-typo signal).
+           (define ancestor-declared?
+             (for*/or ([anc (in-list (chain-ancestors node))]
+                       [ae (in-value (merged-entry anc field))])
+               (and ae #t)))
            (define perm (entry-perm e))
            (cond
+             ;; Declared provide (without override) against an existing
+             ;; provider: the "I am the first provider" claim is false.
+             [(and ancestor-provider
+                   (memq 'provide perm)
+                   (not (memq 'override perm)))
+              (add-issue!
+               (issue 'provide-conflict field
+                      (format "~a 声明 provide 但链内已有提供者: ~a（需 override）"
+                              (config-object-name node)
+                              (config-object-name (car ancestor-provider)))
+                      (hasheq 'at (entry-srcloc e))))
+              acc]
+             ;; Declared provide (without introduce) but the field was never
+             ;; declared upstream: almost certainly a misspelled field name.
+             [(and (not ancestor-declared?)
+                   (memq 'provide perm)
+                   (not (memq 'introduce perm)))
+              (add-issue!
+               (issue 'dangling-provide field
+                      (format "~a 声明 provide 但字段未在上游声明"
+                              (config-object-name node))
+                      (hasheq 'at (entry-srcloc e))))
+              acc]
              [(and ancestor-provider (not (memq 'override perm)))
               ;; Chain re-introduction: inoperative, recorded, no issue.
               (add-origin! 'introduce-inoperative node e

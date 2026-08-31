@@ -41,10 +41,13 @@
 
 **`config.rkt`——config 是部分记录，声明是自愿的检查。** 未填字段是一等
 状态（不是 `#f`、不是哨兵）；`resolve` 之后仍可以有未填（`noneager`）。
-字段声明有六轴，全部有默认：`{introduce,override}` 意图轴 + `singlenew`
+字段声明有六轴，全部有默认：`{introduce,provide,override}` 意图轴
+（首声明/首供值/改决策；`provide` 表态换"上游确有声明且无人已供"
+两查，抓字段名拼错）+ `singlenew`
 引入轴 + `open` 封印轴 + `noneager` 急切轴等——空属性组 `()` 即全默认，
 写 `(override)`、`(sealed)` 是**自愿换取一项检查**，不是必修语法。
-两种组合关系语义不同：`#:extends` 是链（链内改值必须 `override`）；
+两种组合关系语义不同：`#:extends` 是链（链内改值建议显式 `override`——
+表态换 dangling 检查；裸 `()` 亦有覆盖许可，`sealed` 对两者同拦）；
 `(config a b)` 是并列合一（无序可交换，同字段不同值 = 冲突报错，
 **没有 force**——要改就改源头或一方降级为 `default`）。
 求解管线五段带门控：合并 → ①计算默认（惰性 + 循环检测，循环字段被毒化

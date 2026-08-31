@@ -193,3 +193,23 @@ EOF
              (lambda () (load-config "@jobs/link/secret"))))
 
 (delete-directory/files root2)
+
+;; ---------------------------------------------------------------------------
+;; provide 意图经 .config 声明
+
+(define root3 (make-temporary-file "configkit-loader3-~a" 'directory))
+(define (w3! rel text)
+  (define p (build-path root3 rel))
+  (make-parent-directory* p)
+  (call-with-output-file p (lambda (o) (display text o))))
+(w3! "jobs/pv-base.config" "[f (introduce required)]\n")
+(w3! "jobs/pv.config" "#:extends \"pv-base\"\n[f (provide) 7]\n")
+(w3! "jobs/pv-typo.config" "#:extends \"pv-base\"\n[ff (provide) 7]\n")
+(parameterize ([current-config-search-heads (hash 'jobs (build-path root3 "jobs"))])
+  (define r (resolve (load-config "@jobs/pv")))
+  (check-true (resolved-ok? r) (format "~a" (resolved-issues r)))
+  (check-equal? (resolved-value r 'f) 7)
+  (check-true (for/or ([i (in-list (resolved-issues
+                                    (resolve (load-config "@jobs/pv-typo"))))])
+                (eq? (issue-kind i) 'dangling-provide))))
+(delete-directory/files root3)

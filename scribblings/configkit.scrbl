@@ -18,9 +18,11 @@
 
 @itemlist[
  @item{config 是@bold{部分记录}：未填字段是一等状态，由消费者按需裁决（noneager）。}
- @item{两种组合：@racket[#:extends] 继承链（链内改值须 @racket[override]）；
+ @item{两种组合：@racket[#:extends] 继承链（链内改值建议声明
+       @racket[override]：表态换空覆盖检查；裸 @racket[()] 亦有覆盖许可，
+       @racket[sealed] 同拦）；
        @racket[(config a b ...)] 并列（无序可交换，具体值冲突即错，无 force）。}
- @item{六轴默认：@racket[{introduce override}]、singlenew、open、noneager。}
+ @item{六轴默认：@racket[{introduce provide override}]、singlenew、open、noneager。}
  @item{求解管线五段带门控：合并 → 计算默认 → 立即验证 → 字段后验 → 全局后验。
        验证的执行时机在全部 default（字面与计算）处理完之后——验证器检查
        成形后的记录；计算默认与立即验证同组累积（计算失败不遮蔽对其输入
@@ -34,7 +36,7 @@
          ([maybe-extends (code:line) (code:line #:extends parent-expr)]
           [maybe-global-validator (code:line #:validate/post proc-expr)]
           [row [field-id (prop ...) maybe-value]]
-          [prop introduce override sealed required eager removed
+          [prop introduce provide override sealed required eager removed
                 multi-introducer env
                 (default expr) (validate expr) (validate/post expr)
                 (probe expr) (help string)])]{

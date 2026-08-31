@@ -209,7 +209,7 @@
   (for ([p (in-list (syntax->list props-stx))])
     (define d (syntax->datum p))
     (cond
-      [(memq d '(introduce override sealed required eager removed
+      [(memq d '(introduce provide override sealed required eager removed
                  multi-introducer env))
        (set! flags (cons d flags))]
       [(and (pair? d) (eq? (car d) 'default))
@@ -302,8 +302,8 @@
          (and (= (length row) 3)
               (present (datum-value who (caddr row)))))
        (define perm
-         (let ([p (filter (lambda (f) (memq f '(introduce override))) flags)])
-           (if (null? p) '(introduce override) p)))
+         (let ([p (filter (lambda (f) (memq f '(introduce provide override))) flags)])
+           (if (null? p) '(introduce provide override) p)))
        (when (and value (or (memq 'required flags) (memq 'removed flags)))
          (raise-arguments-error who
                                 "required/removed rows must not give a value"

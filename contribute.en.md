@@ -53,12 +53,14 @@ roster.
 checks.** Unfilled fields are a first-class state (not `#f`, not a
 sentinel); a config may still have unfilled fields after `resolve`
 (`noneager`). Field declarations run along six axes, all with defaults:
-the intent axis `{introduce,override}`, the introduction axis `singlenew`,
+the intent axis `{introduce,provide,override}` (first declaration / first provision / changing a decision; a declared `provide` buys the declared-upstream and nobody-provided checks, catching field-name typos), the introduction axis `singlenew`,
 the sealing axis `open`, the eagerness axis `noneager`, etc. — an empty
 property group `()` means all defaults, and writing `(override)` or
 `(sealed)` **buys exactly one extra check**; it is never mandatory syntax.
 The two composition relations have different semantics: `#:extends` is a
-chain (changing an inherited value requires `override`); `(config a b)` is
+chain (declaring `override` when changing an inherited value is advised —
+intent stated, dangling check bought; bare `()` also carries the
+permission, and `sealed` blocks either); `(config a b)` is
 parallel unification (unordered, commutative; same field with different
 concrete values = conflict error, and **there is no force** — fix the source
 or demote one side to a `default`). The resolution pipeline has five gated

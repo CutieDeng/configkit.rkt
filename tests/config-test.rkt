@@ -333,6 +333,37 @@
 (check-eq? (config-source-suite (resolve no-suite)) 'unknown)
 
 ;; ---------------------------------------------------------------------------
+;; provide 意图：首供值表态（() 的许可集 = {introduce, provide, override}）
+
+(define-config pv-base
+  [pf (introduce required)]        ; 引入未填
+  [pg (introduce) 1]               ; 已提供
+  [ph ((default 5))])              ; 仅默认
+
+;; 对未填字段首供值：生效，provenance 记 provided
+(define-config pv-ok #:extends pv-base [pf (provide) "v"])
+(define rpv (resolve pv-ok))
+(check-true (resolved-ok? rpv) (format "~a" (resolved-issues rpv)))
+(check-equal? (resolved-value rpv 'pf) "v")
+(check-not-false (memq 'provided (map origin-kind (provenance-ref rpv 'pf))))
+
+;; 字段名拼错（上游从未声明）→ dangling-provide，值不生效
+(define-config pv-typo #:extends pv-base [pff (provide) "v"])
+(define rpt (resolve pv-typo))
+(check-true (has-issue? rpt 'dangling-provide 'pff))
+(check-eq? (resolved-value rpt 'pff 'absent) 'absent)
+
+;; 上游已有提供者 → provide-conflict，祖先值保持
+(define-config pv-late #:extends pv-base [pg (provide) 2])
+(define rpl (resolve pv-late))
+(check-true (has-issue? rpl 'provide-conflict 'pg))
+(check-equal? (resolved-value rpl 'pg) 1)
+
+;; 上游仅默认：默认非提供，provide 合法（默认让位）
+(define-config pv-dflt #:extends pv-base [ph (provide) 6])
+(check-equal? (resolved-value (resolve pv-dflt) 'ph) 6)
+
+;; ---------------------------------------------------------------------------
 ;; 管线时序：验证的执行时机在全部 default（字面与计算）处理完之后——
 ;; 验证器检查成形后的记录
 
