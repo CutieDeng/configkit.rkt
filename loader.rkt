@@ -235,6 +235,14 @@
   (define default #f)
   (define validators '())
   (define help #f)
+  ;; 带参属性的参数位：缺参是配置笔误，给带行号的用户态错误，
+  ;; 不许裸 cadr 契约异常漏出。
+  (define (prop-payload p what)
+    (define xs (syntax->list p))
+    (unless (and xs (pair? (cdr xs)))
+      (raise-arguments-error who (format "(~a ...) 需要一个参数" what)
+                             "at" (stx-loc p)))
+    (cadr xs))
   (for ([p (in-list (syntax->list props-stx))])
     (define d (syntax->datum p))
     (cond
@@ -242,7 +250,7 @@
                  multi-introducer env))
        (set! flags (cons d flags))]
       [(and (pair? d) (eq? (car d) 'default))
-       (define payload (cadr (syntax->list p)))
+       (define payload (prop-payload p 'default))
        (set! default
              (present
               (if (and (pair? (syntax->datum payload))
@@ -250,7 +258,7 @@
                   (sandboxed-closure ev (syntax->datum payload) (stx-loc p))
                   (datum-value who payload))))]
       [(and (pair? d) (memq (car d) '(validate validate/post)))
-       (define payload (cadr (syntax->list p)))
+       (define payload (prop-payload p (car d)))
        (set! validators
              (cons (vdecl (if (eq? (car d) 'validate) 'immediate 'post)
                           (sandboxed-closure ev (syntax->datum payload)
@@ -264,7 +272,7 @@
                               "(probe ...) 仅限代码侧配置（探测器是宿主受信代码，不经沙箱）"
                               "at" (stx-loc p))]
       [(and (pair? d) (eq? (car d) 'help))
-       (define s (cadr d))
+       (define s (syntax->datum (prop-payload p 'help)))
        (unless (string? s)
          (raise-arguments-error who "(help ...) takes a string literal"
                                 "at" (stx-loc p)))
@@ -300,7 +308,20 @@
          (raise-arguments-error who "at most one #:extends" "file" path))
        (when (null? (cdr xs))
          (raise-arguments-error who "#:extends needs a reference" "file" path))
-       (set! parent-ref (syntax->datum (cadr xs)))
+       (define ref (syntax->datum (cadr xs)))
+       ;; 引用只有两种合法形态；笔误在解析现场按行号报出
+       (cond
+         [(symbol? ref)
+          (raise-arguments-error
+           who
+           "#:extends 裸符号已禁止；写模块化绝对路径 \"@head/名字\" 或向下相对路径"
+           "given" ref "at" (stx-loc (cadr xs)))]
+         [(not (string? ref))
+          (raise-arguments-error
+           who
+           "#:extends 需要引用字符串：\"@head/名字\" 或向下相对路径"
+           "given" ref "at" (stx-loc (cadr xs)))])
+       (set! parent-ref ref)
        (loop (cddr xs))]
       [(eq? (syntax-e (car xs)) '#:validate/post)
        (when (null? (cdr xs))
@@ -373,11 +394,6 @@
   (define-values (parent-ref globals rows)
     (parameterize ([currently-loading (cons complete (currently-loading))])
       (parse-config-file 'load-config complete)))
-  (when (symbol? parent-ref)
-    (raise-arguments-error
-     'load-config
-     "#:extends 裸符号已禁止；写模块化绝对路径 \"@head/名字\" 或向下相对路径"
-     "given" parent-ref "file" (path->string complete)))
   (define parent
     (and parent-ref
          (parameterize ([currently-loading (cons complete (currently-loading))])

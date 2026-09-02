@@ -266,3 +266,25 @@ EOF
               (eq? (issue-kind i) 'duplicate-value)))
 (check-equal? (resolved-value rdup 'x) 1)
 (delete-directory/files root5)
+
+;; ---------------------------------------------------------------------------
+;; 配置笔误全部进用户态错误流程：带行号的友好错误，无裸契约异常
+
+(define root6 (make-temporary-file "configkit-loader6-~a" 'directory))
+(define (w6! rel text)
+  (define p (build-path root6 rel))
+  (make-parent-directory* p)
+  (call-with-output-file p (lambda (o) (display text o))))
+(w6! "default-empty.config"  "[x ((default))]\n")
+(w6! "validate-empty.config" "[x ((validate))]\n")
+(w6! "help-empty.config"     "[x ((help))]\n")
+(w6! "extends-number.config" "#:extends 42\n[x () 1]\n")
+(check-exn #rx"\\(default \\.\\.\\.\\) 需要一个参数"
+           (lambda () (load-config-file (build-path root6 "default-empty.config"))))
+(check-exn #rx"\\(validate \\.\\.\\.\\) 需要一个参数"
+           (lambda () (load-config-file (build-path root6 "validate-empty.config"))))
+(check-exn #rx"\\(help \\.\\.\\.\\) 需要一个参数"
+           (lambda () (load-config-file (build-path root6 "help-empty.config"))))
+(check-exn #rx"#:extends 需要引用字符串"
+           (lambda () (load-config-file (build-path root6 "extends-number.config"))))
+(delete-directory/files root6)
