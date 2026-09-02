@@ -242,13 +242,10 @@
 ;; ……但阶段门控：合并期已有错误，① 不再运行，b 的验证器错误不出现
 (check-false (has-issue? r17 'validator-failed 'b))
 
-;; Same config giving a field two values is a construction error;
-;; multiple rows merging properties (value + validator rows) are fine.
-(check-exn exn:fail?
-           (lambda ()
-             (let ()
-               (define-config dup [x () 1] [x () 2])
-               dup)))
+;; Same config giving a field two values: no longer a construction raise —
+;; recorded and reported as a duplicate-value issue at resolve (see the
+;; dedicated section at the end of this file); multiple rows merging
+;; properties (value + validator rows) are fine.
 (let ()
   (define-config split-rows
     [x () 1]
@@ -416,3 +413,25 @@
 (define-config class-parent [class () "base-class"])
 (define-config class-child #:extends class-parent [class (override) "sub-class"])
 (check-equal? (resolved-class (resolve class-child)) "sub-class")
+
+;; ---------------------------------------------------------------------------
+;; 同一 config 内一字段多次给值：非法配置但不崩溃——记 duplicate-value
+;; 议题（带赢家与后行源位置），首个值行生效；祖先里的重复同样被巡出
+
+(define-config dup-direct [x () 1] [x () 2])
+(define r-dup (resolve dup-direct))
+(check-false (resolved-ok? r-dup))
+(check-true (for/or ([i (in-list (resolved-issues r-dup))])
+              (eq? (issue-kind i) 'duplicate-value)))
+(check-equal? (resolved-value r-dup 'x) 1)          ; 首个值行生效
+
+(define-config dup-child #:extends dup-direct [y () 3])
+(check-true (for/or ([i (in-list (resolved-issues (resolve dup-child)))])
+              (eq? (issue-kind i) 'duplicate-value)))
+
+;; 值行 + 无值行（验证器/属性行）不算重复：既有的多行并集语义不受影响
+(define-config split-rows
+  [z ((validate (lambda (v) (> v 0))))]
+  [z () 5])
+(check-true (resolved-ok? (resolve split-rows)))
+(check-equal? (resolved-value (resolve split-rows) 'z) 5)

@@ -75,7 +75,10 @@
 
 ;; A config object: identity, one optional parent (inheritance chain edge),
 ;; field entries, and config-level posterior validators.
-(struct config-object (name srcloc parent entries global-validators)
+;; dup-values: (listof (list field first-srcloc (listof later-srcloc))) —
+;; 同一 config 内一字段多个值行是非法配置，但构造期不崩溃：记录在此，
+;; resolve 时化为 duplicate-value 议题（应用侧输出），首个值行生效。
+(struct config-object (name srcloc parent entries global-validators dup-values)
   #:transparent)
 
 ;; Parallel composition node.
@@ -131,7 +134,7 @@
    (for/hash ([(k v) (in-hash h)])
      (values k (list (make-entry #:multi? #t
                                  #:value (present (normalize-value v))))))
-   '()))
+   '() '()))
 
 (define (->config part who)
   (cond
@@ -158,12 +161,13 @@
       (hash-update h (car r)
                    (lambda (es) (append es (list (cdr r))))
                    '())))
-  (for ([(f es) (in-hash entries)])
-    (when (> (for/sum ([e (in-list es)]) (if (entry-value e) 1 0)) 1)
-      (raise-arguments-error 'define-config
-                             "same config gives a field more than one value"
-                             "field" f "config" name)))
-  (config-object name srcloc parent* entries global-validators))
+  (define dup-values
+    (for/list ([(f es) (in-hash entries)]
+               #:when (> (for/sum ([e (in-list es)]) (if (entry-value e) 1 0))
+                         1))
+      (define valued (filter entry-value es))
+      (list f (entry-srcloc (car valued)) (map entry-srcloc (cdr valued)))))
+  (config-object name srcloc parent* entries global-validators dup-values))
 
 (begin-for-syntax
   (define (stx-srcloc stx)
@@ -500,6 +504,21 @@
                        [k (in-hash-keys (config-object-entries n))])
              k))
           symbol<?))
+
+  ;; 同一 config 内一字段多次给值：非法配置。构造期只记录（见
+  ;; make-config-object），此处化为议题——首个值行生效，后行点名忽略；
+  ;; 应用侧经 check / 诊断块输出，装载全程不崩溃。链上祖先一并巡查。
+  (for* ([n (in-list (remove-duplicates
+                      (append-map (lambda (x) (cons x (chain-ancestors x)))
+                                  nodes)))]
+         [d (in-list (config-object-dup-values n))])
+    (add-issue!
+     (issue 'duplicate-value (car d)
+            (format "同一 config 内字段多次给值；首个值行生效（后行于 ~a）"
+                    (string-join (map ~a (caddr d)) "、"))
+            (hasheq 'value-from (config-object-name n)
+                    'value-at (cadr d)
+                    'hint "删除多余的值行，一份声明只留一个值"))))
 
   ;; Phase: merge (unification + axis checks + eager), per field.
   (define values-out (make-hasheq))

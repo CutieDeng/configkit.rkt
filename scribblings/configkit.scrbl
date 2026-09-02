@@ -41,7 +41,10 @@
                 (default expr) (validate expr) (validate/post expr)
                 (probe expr) (help string)])]{
 定义一个具名 config。属性组强制存在（可为空 @racket[()] 即全默认）；
-值位在 @filepath{.rkt} 中为任意表达式。绑定名即标识，逐行捕获源位置入 provenance。}
+值位在 @filepath{.rkt} 中为任意表达式。绑定名即标识，逐行捕获源位置入 provenance。
+同 config 同字段可写多行（属性并集、验证器累加）；但多行给值是非法配置——
+不在构造期抛错，而是记录为 @racket['duplicate-value] 议题（首个值行生效，
+后行源位置点名），由应用侧经 @racket[resolved-issues] 检查输出。}
 
 @defproc[(config [part (or/c config-object? hash? any/c)] ...) any/c]{
 并列组合。@racket[hash] 被强转为最宽松声明的匿名 config（provenance 降为整体粒度）。}
@@ -164,9 +167,13 @@ did-you-mean 提示。准则：@bold{建议缺省用警告版}（@racket[warn-un
               @defparam[current-config-registry registry hash?]
               @defproc[(load-config [ref (or/c string? symbol?)]) any/c]
               @defproc[(load-config-file [path path-string?]) any/c])]{
-@filepath{.config} 加载。引用三形态：@racket["子路径"]（本文件目录向下）、
-@racket["@头/子路径"]（宿主定义根向下）、符号（注册表代码 config）。
+@filepath{.config} 加载。@racket[#:extends] 仅两形态：@racket["子路径"]
+（本文件目录向下）、@racket["@头/端点"]（模块化绝对路径；头映射到目录
+则按根向下找文件，映射到注册表命名空间则直通代码 config）。裸符号仅限
+宿主 API（@racket[load-config]），@filepath{.config} 内禁写。
 禁 @litchar{..} 与绝对路径；二段包含检查（词法 + 符号链接解析后）。
+诊断中的源位置跟随进入路由：直接路径显示相对当前目录，@litchar{@"@"头}
+引用回显端点，不暴露头根目录的真实位置。
 装载零执行：值位只读；封闭位置在 @racketmodname[racket/sandbox] 内求值，
 闭包调用期重入沙箱。头表与注册表由宿主持有，非配置数据。}
 

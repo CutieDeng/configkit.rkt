@@ -141,17 +141,23 @@ EOF
               "沙箱应拒绝文件系统访问，验证器以异常失败")
   (check-false (file-exists? "/tmp/should-not-happen"))
 
-  ;; Registry reference: no file involved.
+  ;; Registry head: @head/名字 是代码侧片段的模块化端点，无文件参与。
   (define-config code-base [suite (introduce sealed) 'demo])
   (write-config! (build-path root "jobs" "uses-registry.config")
-                 "#:extends registry-base\n[label () \"reg\"]\n")
-  (parameterize ([current-config-registry (hash 'registry-base code-base)])
+                 "#:extends \"@reg/code-base\"\n[label () \"reg\"]\n")
+  (parameterize ([current-config-search-heads
+                  (hash-set heads 'reg (hash 'code-base code-base))])
     (define c (load-config "@jobs/uses-registry"))
     (define rr (resolve c))
     (check-eq? (resolved-value rr 'suite) 'demo)
     (check-equal? (resolved-value rr 'label) "reg"))
-  (check-exn #rx"unknown registry reference"
-             (lambda () (load-config "@jobs/uses-registry"))))
+  (check-exn #rx"undefined search head"
+             (lambda () (load-config "@jobs/uses-registry")))
+  ;; #:extends 只许 @head 端点与向下相对路径：裸注册表符号被拒
+  (write-config! (build-path root "jobs" "bare-symbol.config")
+                 "#:extends registry-base\n[label () \"reg\"]\n")
+  (check-exn #rx"裸符号已禁止"
+             (lambda () (load-config "@jobs/bare-symbol"))))
 
 ;; A lambda-shaped list in value position is inert data, never a closure:
 ;; value positions are read, not evaluated.
@@ -213,3 +219,50 @@ EOF
                                     (resolve (load-config "@jobs/pv-typo"))))])
                 (eq? (issue-kind i) 'dangling-provide))))
 (delete-directory/files root3)
+
+;; ---------------------------------------------------------------------------
+;; 源位置显示跟随进入路由：直接路径 → 相对 cwd；@head 引用 → 模块化端点
+;; （不泄露搜索头根目录真实位置），head 内链式 #:extends 继承别名
+
+(define root4 (make-temporary-file "configkit-loader4-~a" 'directory))
+(define (w4! rel text)
+  (define p (build-path root4 rel))
+  (make-parent-directory* p)
+  (call-with-output-file p (lambda (o) (display text o))))
+(w4! "shared/common.config"
+     "[port ((validate (integer-between 1 65535))) 70000]\n")
+(w4! "shared/base-config.config"
+     "#:extends \"common\"\n[host () \"localhost\"]\n")
+(w4! "jobs/nested/job.config"
+     "#:extends \"@root/shared/base-config\"\n[host (override) \"example.com\"]\n")
+(define (port-loc r)
+  (for/first ([i (in-list (resolved-issues r))]
+              #:when (eq? (issue-field i) 'port))
+    (hash-ref (issue-data i) 'value-at)))
+(define (job4-port-loc)
+  (parameterize ([current-config-search-heads (hash 'root root4)])
+    (port-loc (resolve (load-config-file
+                        (build-path root4 "jobs/nested/job.config"))))))
+;; @head 路由（含 head 内链式相对引用）：端点显示，与 cwd 无关
+(parameterize ([current-directory root4])
+  (check-equal? (job4-port-loc) "@root/shared/common.config:1"))
+(parameterize ([current-directory (find-system-path 'home-dir)])
+  (check-equal? (job4-port-loc) "@root/shared/common.config:1"))
+;; 直接文件路径进入：相对 cwd 显示（链式向下引用同样按直接路径处理）
+(parameterize ([current-directory root4])
+  (check-equal? (port-loc (resolve (load-config-file "shared/base-config.config")))
+                "shared/common.config:1"))
+(delete-directory/files root4)
+
+;; ---------------------------------------------------------------------------
+;; 同文件一字段多次给值：装载不崩溃，resolve 记 duplicate-value 议题
+;; （首个值行生效），应用侧经 check/诊断块输出
+
+(define root5 (make-temporary-file "configkit-loader5-~a" 'directory))
+(call-with-output-file (build-path root5 "dup.config")
+  (lambda (o) (display "[x () 1]\n[x () 2]\n" o)))
+(define rdup (resolve (load-config-file (build-path root5 "dup.config"))))
+(check-true (for/or ([i (in-list (resolved-issues rdup))])
+              (eq? (issue-kind i) 'duplicate-value)))
+(check-equal? (resolved-value rdup 'x) 1)
+(delete-directory/files root5)

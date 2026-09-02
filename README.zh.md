@@ -153,8 +153,8 @@ configkit 是极简、易用、人体工程学的配置文件框架。
 - **未填 fail 选型**：渲染器传返回占位的过程；严格检查传抛错的过程；
   只探测存在用缺省哨兵 `source-missing`。
 - **测试注入**：假 `.config` 树 = `current-config-search-heads` 指向
-  替身目录（配置文本零修改）；假代码基配置 = `current-config-registry`
-  换绑。各一层 `parameterize`。
+  替身目录；假代码基配置 = 头表里把同名头换绑到替身注册表命名空间。
+  配置文本零修改，各一层 `parameterize`。
 - **规模选型**：`(config c (hash 'k v))` 只用于测试与简单覆盖；
   成规模写 `define-config` 或 `.config`。
 - **报告下游**：`.rktd` 是单个可 `read` 数据，测试端读回直接断言；

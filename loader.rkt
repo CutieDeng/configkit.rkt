@@ -98,13 +98,14 @@
   simplified)
 
 (define (resolve-reference who ref base-dir)
-  ;; -> (values 'file path) | (values 'registry config)
+  ;; -> (values 'file path alias) | (values 'registry config #f)
+  ;; alias: (cons root "@head")，@head 引用的显示别名；其余 #f
   (cond
     [(symbol? ref)
      (define c (hash-ref (current-config-registry) ref #f))
      (unless c
        (raise-arguments-error who "unknown registry reference" "reference" ref))
-     (values 'registry c)]
+     (values 'registry c #f)]
     [(and (string? ref) (string-prefix? ref "@"))
      (define parts (split-reference who (substring ref 1)))
      (define head (string->symbol (car parts)))
@@ -114,13 +115,28 @@
      (unless root
        (raise-arguments-error who "undefined search head"
                               "head" head "reference" ref))
-     (values 'file (contained-path who root (cdr parts)))]
+     (cond
+       ;; 头映射到注册表（符号 → 代码侧片段）：@head/名字 即模块化端点
+       [(hash? root)
+        (unless (null? (cddr parts))
+          (raise-arguments-error who "registry head takes a single name"
+                                 "reference" ref))
+        (define c (hash-ref root (string->symbol (cadr parts)) #f))
+        (unless c
+          (raise-arguments-error who "unknown name under registry head"
+                                 "reference" ref
+                                 "known" (sort (hash-keys root) symbol<?)))
+        (values 'registry c #f)]
+       [else
+        (values 'file (contained-path who root (cdr parts))
+                (cons (simplify-path (path->complete-path root) #f)
+                      (format "@~a" head)))])]
     [(string? ref)
      (unless base-dir
        (raise-arguments-error who
                               "a relative reference needs a referencing file"
                               "reference" ref))
-     (values 'file (contained-path who base-dir (split-reference who ref)))]
+     (values 'file (contained-path who base-dir (split-reference who ref)) #f)]
     [else (raise-argument-error who "string or symbol reference" ref)]))
 
 ;; ---------------------------------------------------------------------------
@@ -176,12 +192,25 @@
 ;; ---------------------------------------------------------------------------
 ;; Parsing
 
+;; 源位置的显示路径跟随进入路由：直接以文件路径进入的配置，显示相对
+;; 当前目录的路径；经 @head 模块化引用进入的，回显引用端点（@head/…）
+;; ——不暴露搜索头根目录的真实位置，防信息泄露与抽象泄露。别名在引用
+;; 解析时设定，随加载的动态范围传播，同一 head 内的链式 #:extends 继承
+;; 模块化显示。仅词法化简，不改写符号链接。
+(define current-source-alias (make-parameter #f)) ; (cons root-path "@head")
+
+(define (display-path p)
+  (define abs (simplify-path (path->complete-path p) #f))
+  (define alias (current-source-alias))
+  (if (and alias (under-root? (car alias) abs))
+      (format "~a/~a" (cdr alias)
+              (path->string (find-relative-path (car alias) abs)))
+      (path->string (find-relative-path (current-directory) abs))))
+
 (define (stx-loc stx)
   (format "~a:~a"
           (let ([src (syntax-source stx)])
-            (if (path? src)
-                (let-values ([(_b f _d) (split-path src)]) (path->string f))
-                (format "~a" src)))
+            (if (path? src) (display-path src) (format "~a" src)))
           (or (syntax-line stx) "?")))
 
 (define (datum-value who stx)
@@ -331,7 +360,9 @@
 
 (define (load-config-file path)
   ;; Host-trusted direct entry (tests, tooling); .config references inside the
-  ;; file are still confined to downward/@head/registry.
+  ;; file are confined to downward relative paths and @head endpoints (a head
+  ;; maps to a directory or a registry namespace); bare registry symbols are
+  ;; host-API-only and forbidden in .config.
   (define complete (simplify-path (path->complete-path path) #f))
   (when (member complete (currently-loading))
     (raise-arguments-error 'load-config "cyclic #:extends"
@@ -342,21 +373,29 @@
   (define-values (parent-ref globals rows)
     (parameterize ([currently-loading (cons complete (currently-loading))])
       (parse-config-file 'load-config complete)))
+  (when (symbol? parent-ref)
+    (raise-arguments-error
+     'load-config
+     "#:extends 裸符号已禁止；写模块化绝对路径 \"@head/名字\" 或向下相对路径"
+     "given" parent-ref "file" (path->string complete)))
   (define parent
     (and parent-ref
          (parameterize ([currently-loading (cons complete (currently-loading))])
            (load-reference 'load-config parent-ref dir))))
-  (make-config-object name (path->string complete) parent rows globals))
+  (make-config-object name (display-path complete) parent rows globals))
 
 (define (load-reference who ref base-dir)
-  (define-values (kind target) (resolve-reference who ref base-dir))
+  (define-values (kind target alias) (resolve-reference who ref base-dir))
   (case kind
     [(registry) target]
     [(file)
      (unless (file-exists? target)
        (raise-arguments-error who "referenced .config does not exist"
                               "path" (path->string target)))
-     (load-config-file target)]))
+     ;; 无别名的（向下相对）引用不重置参数：head 内的链式引用继承别名
+     (if alias
+         (parameterize ([current-source-alias alias]) (load-config-file target))
+         (load-config-file target))]))
 
 (define (load-config ref)
   ;; Host entry: "@head/sub" or a registry symbol; a bare relative string has

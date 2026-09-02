@@ -85,7 +85,10 @@ limits + security guard); every closure call re-enters the sandbox, so the
 limits apply at call time, not just at load time. Path references allow no
 `..` and no absolute paths; containment checking is two-stage (lexical
 normalization, then per-component symlink resolution — both must stay inside
-the equally-resolved root). The head table and the registry are **not
+the equally-resolved root). `#:extends` takes exactly two forms: a downward
+relative path, or `@head/endpoint` (a head maps to a directory or to a
+registry namespace); bare registry symbols are host-API-only and forbidden
+in `.config`. The head table and the registry are **not
 configuration data** (no self-privilege-escalation): the loader holds them,
 the host registers them, downstream configs can use but never extend them.
 Fake heads and registry rebinding are exactly the test-injection mechanism —

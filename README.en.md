@@ -163,9 +163,9 @@ land under the report's `'flags` key, warning-severity by default.
   placeholder-returning procedure; strict checkers pass a raising one;
   presence probes use the default sentinel `source-missing`.
 - **Test injection**: a fake `.config` tree = point
-  `current-config-search-heads` at a stand-in directory (config text
-  unchanged); a fake code base-config = rebind `current-config-registry`.
-  Each is one `parameterize`.
+  `current-config-search-heads` at a stand-in directory; a fake code
+  base-config = rebind the same head name to a stand-in registry
+  namespace. Config text unchanged, one `parameterize` each.
 - **Choosing a scale**: `(config c (hash 'k v))` is for tests and simple
   overlays only; at scale, write `define-config` or `.config`.
 - **Downstream of reports**: the `.rktd` is a single `read`-able datum —
