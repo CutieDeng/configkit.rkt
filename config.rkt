@@ -43,7 +43,8 @@
          ;; verdict constructors and predicates
          fail warn skip
          verdict-fail? verdict-warn? verdict-skip?
-         verdict-fail-reason verdict-fail-expected verdict-fail-given verdict-fail-hint
+         verdict-fail-reason verdict-fail-expected verdict-fail-given
+         verdict-fail-hint verdict-fail-field
          verdict-warn-reason verdict-skip-reason
          (struct-out vdecl)
          ;; issue introspection
@@ -89,13 +90,15 @@
 (struct origin (kind config-name srcloc info) #:transparent)
 
 ;; Validator verdicts (rich protocol, docs/config-examples.md §1.4).
-(struct verdict-fail (reason expected given hint) #:transparent)
+;; field: 全局（config 级）验证器点名肇事字段——issue 归到该字段上，
+;; 失败归因随之找到值的写入位置（值来自 …），而不是落在 %config。
+(struct verdict-fail (reason expected given hint field) #:transparent)
 (struct verdict-warn (reason) #:transparent)
 (struct verdict-skip (reason) #:transparent)
 
 (define (fail #:reason reason #:expected [expected #f]
-              #:given [given #f] #:hint [hint #f])
-  (verdict-fail reason expected given hint))
+              #:given [given #f] #:hint [hint #f] #:field [field #f])
+  (verdict-fail reason expected given hint field))
 (define (warn #:reason reason) (verdict-warn reason))
 (define (skip #:reason reason) (verdict-skip reason))
 
@@ -440,7 +443,9 @@
       [(string? v)
        (add-issue! (issue 'validator-failed field v (hasheq)))]
       [(verdict-fail? v)
-       (add-issue! (issue 'validator-failed field (verdict-fail-reason v)
+       (add-issue! (issue 'validator-failed
+                          (or (verdict-fail-field v) field)
+                          (verdict-fail-reason v)
                           (hasheq 'expected (verdict-fail-expected v)
                                   'given (verdict-fail-given v)
                                   'hint (verdict-fail-hint v))))]
@@ -764,7 +769,10 @@
       (define d1 (if (vdecl-srcloc vd)
                      (hash-set d0 'validator-at (vdecl-srcloc vd))
                      d0))
-      (define o (for/last ([o (in-list (hash-ref origins-out field '()))]
+      ;; 按 issue 实际归属的字段查值出处（全局验证器可经 fail #:field
+      ;; 点名肇事字段，不再落 %config），而非验证器挂载的字段。
+      (define o (for/last ([o (in-list (hash-ref origins-out (issue-field i)
+                                                 '()))]
                            #:when (memq (origin-kind o)
                                         '(provided defaulted computed)))
                   o))
@@ -848,7 +856,11 @@
   ;; Failure attribution: issues and warnings from a validator carry the
   ;; validator's declaration site and the provenance of the value it judged.
   (define ((with-context field vd sink) i)
-    (sink (if field ((attributed-issue! field vd) i)
+    ;; 归因按 issue 实际归属的字段：全局验证器经 fail #:field 点名肇事
+    ;; 字段时同样拿到值出处；仍落 %config 的只带验证器位置。
+    (define real-field?
+      (and (issue-field i) (not (eq? (issue-field i) '%config))))
+    (sink (if (or field real-field?) ((attributed-issue! field vd) i)
               ((attributed-issue!/no-field vd) i))))
   (define ((attributed-issue!/no-field vd) i)
     (if (vdecl-srcloc vd)

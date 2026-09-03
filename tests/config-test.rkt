@@ -435,3 +435,22 @@
   [z () 5])
 (check-true (resolved-ok? (resolve split-rows)))
 (check-equal? (resolved-value (resolve split-rows) 'z) 5)
+
+;; ---------------------------------------------------------------------------
+;; 全局验证器经 fail #:field 点名肇事字段：issue 归到该字段，
+;; 归因带上值的写入位置（值来自），不再落 %config
+
+(define-config field-named-global
+  #:validate/post (lambda (cfg)
+                    (if (equal? (config-source-ref cfg 'root) "/bad")
+                        (fail #:reason "根不可用" #:field 'root)
+                        #t))
+  [root () "/bad"])
+(define r-fng (resolve field-named-global))
+(define fng-issue
+  (for/first ([i (in-list (resolved-issues r-fng))]
+              #:when (eq? (issue-kind i) 'validator-failed))
+    i))
+(check-eq? (issue-field fng-issue) 'root)
+(check-regexp-match #rx"config-test\\.rkt:[0-9]+"
+                    (hash-ref (issue-data fng-issue) 'value-at ""))

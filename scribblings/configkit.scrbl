@@ -99,12 +99,15 @@
 @deftogether[(@defproc[(fail [#:reason reason string?]
                              [#:expected expected any/c #f]
                              [#:given given any/c #f]
-                             [#:hint hint any/c #f]) verdict-fail?]
+                             [#:hint hint any/c #f]
+                             [#:field field (or/c symbol? #f) #f]) verdict-fail?]
               @defproc[(warn [#:reason reason string?]) verdict-warn?]
               @defproc[(skip [#:reason reason string?]) verdict-skip?])]{
 验证器富裁决。另接受 @racket[#t]/@racket[(void)] 通过、字符串为失败原因、
 列表逐条累积；@racket[skip] 仅后验有意义；非协议返回值记
-@racket['validator-protocol] 警告。}
+@racket['validator-protocol] 警告。@racket[#:field] 供全局（config 级）
+验证器点名肇事字段：issue 归到该字段，归因随之带上值的写入位置
+（值来自），不再落 @racket['%config]。}
 
 @section{协议（configkit/source）}
 
