@@ -45,7 +45,7 @@
          verdict-fail? verdict-warn? verdict-skip?
          verdict-fail-reason verdict-fail-expected verdict-fail-given
          verdict-fail-hint verdict-fail-field
-         verdict-warn-reason verdict-skip-reason
+         verdict-warn-reason verdict-warn-field verdict-skip-reason
          (struct-out vdecl)
          ;; issue introspection
          (struct-out issue)
@@ -93,13 +93,14 @@
 ;; field: 全局（config 级）验证器点名肇事字段——issue 归到该字段上，
 ;; 失败归因随之找到值的写入位置（值来自 …），而不是落在 %config。
 (struct verdict-fail (reason expected given hint field) #:transparent)
-(struct verdict-warn (reason) #:transparent)
+(struct verdict-warn (reason field) #:transparent)
 (struct verdict-skip (reason) #:transparent)
 
 (define (fail #:reason reason #:expected [expected #f]
               #:given [given #f] #:hint [hint #f] #:field [field #f])
   (verdict-fail reason expected given hint field))
-(define (warn #:reason reason) (verdict-warn reason))
+(define (warn #:reason reason #:field [field #f])
+  (verdict-warn reason field))
 (define (skip #:reason reason) (verdict-skip reason))
 
 ;; ---------------------------------------------------------------------------
@@ -450,7 +451,9 @@
                                   'given (verdict-fail-given v)
                                   'hint (verdict-fail-hint v))))]
       [(verdict-warn? v)
-       (add-warning! (issue 'validator-warning field (verdict-warn-reason v)
+       (add-warning! (issue 'validator-warning
+                            (or (verdict-warn-field v) field)
+                            (verdict-warn-reason v)
                             (hasheq)))]
       [(verdict-skip? v)
        (if (eq? kind 'post)
@@ -513,17 +516,30 @@
   ;; 同一 config 内一字段多次给值：非法配置。构造期只记录（见
   ;; make-config-object），此处化为议题——首个值行生效，后行点名忽略；
   ;; 应用侧经 check / 诊断块输出，装载全程不崩溃。链上祖先一并巡查。
-  (for* ([n (in-list (remove-duplicates
+  (let ([chain-nodes (remove-duplicates
                       (append-map (lambda (x) (cons x (chain-ancestors x)))
-                                  nodes)))]
-         [d (in-list (config-object-dup-values n))])
-    (add-issue!
-     (issue 'duplicate-value (car d)
-            (format "同一 config 内字段多次给值；首个值行生效（后行于 ~a）"
-                    (string-join (map ~a (caddr d)) "、"))
-            (hasheq 'value-from (config-object-name n)
-                    'value-at (cadr d)
-                    'hint "删除多余的值行，一份声明只留一个值"))))
+                                  nodes))])
+    (for* ([n (in-list chain-nodes)]
+           [d (in-list (config-object-dup-values n))])
+      (add-issue!
+       (issue 'duplicate-value (car d)
+              (format "同一 config 内字段多次给值；首个值行生效（后行于 ~a）"
+                      (string-join (map ~a (caddr d)) "、"))
+              (hasheq 'value-from (config-object-name n)
+                      'value-at (cadr d)
+                      'hint "删除多余的值行，一份声明只留一个值"))))
+    ;; 同一 config 既 removed 又给值（跨行并集才可能——同行构造期已拒）：
+    ;; 值生效，但"移除祖先值又自己供值"语义可疑，给警告
+    (for* ([n (in-list chain-nodes)]
+           [f (in-hash-keys (config-object-entries n))])
+      (define e (merged-entry n f))
+      (when (and e (entry-removed? e) (entry-value e))
+        (add-warning!
+         (issue 'removed-provides f
+                "同一 config 既声明 removed 又给值；值生效，但两行意图相悖"
+                (hasheq 'value-from (config-object-name n)
+                        'value-at (entry-srcloc e)
+                        'hint "只留其一：要移除祖先值就别供值，要供值就删 removed 行"))))))
 
   ;; Phase: merge (unification + axis checks + eager), per field.
   (define values-out (make-hasheq))

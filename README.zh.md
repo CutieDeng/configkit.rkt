@@ -52,14 +52,14 @@ configkit 是极简、易用、人体工程学的配置文件框架。
   ✗ copies: 超出闭区间
     给定:     128
     期望:     (1 .. 64)
-    值来自:   bad @ bad.config:3
-    验证器于: nightly.config:2
+    值来自:   bad @ @jobs/bad.config:3
+    验证器于: @jobs/nightly.config:2
   ✗ tune: 不在枚举集内
     给定:     peek
     期望:     ("base" "peak")
     提示:     是否想要 "peak"？
-    值来自:   bad @ bad.config:2
-    验证器于: nightly.config:3
+    值来自:   bad @ @jobs/bad.config:2
+    验证器于: @jobs/nightly.config:3
 ```
 
 ## 人体工程学：不算错、但不对劲的配置
@@ -100,7 +100,7 @@ configkit 是极简、易用、人体工程学的配置文件框架。
 
 ```text
 ―― render-cmdline
-读集: (env:OMP_NUM_THREAD env:OMP_NUM_THREADS env:GOMP_CPU_AFFINITY spec-src copies hw-avail)
+读集: (env:OMP_NUM_THREADS env:GOMP_CPU_AFFINITY env:OMP_NUM_THREAD spec-src copies hw-avail)
 未填读取: (hw-avail)
 标记: ((tune 由运行期探测决定，渲染器有意不读))
 未读字段: (copise)
@@ -113,7 +113,7 @@ configkit 是极简、易用、人体工程学的配置文件框架。
 ```racket
 (peek-field r 'copies)
 ;; copies = 2
-;;   defaulted  nightly @ nightly.config:2
+;;   defaulted  nightly @ @jobs/nightly.config:2
 ```
 
 扫掠只认前缀，拼错的 `env:OMP_NUM_THREAD` 也被当真用掉。声明白名单

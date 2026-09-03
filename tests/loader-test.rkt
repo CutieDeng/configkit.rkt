@@ -288,3 +288,25 @@ EOF
 (check-exn #rx"#:extends 需要引用字符串"
            (lambda () (load-config-file (build-path root6 "extends-number.config"))))
 (delete-directory/files root6)
+
+;; ---------------------------------------------------------------------------
+;; 回归钉（自检实证）：跨头别名传播 + .config 链上的 duplicate-value 出处
+
+(define root7a (make-temporary-file "configkit-loader7a-~a" 'directory))
+(define root7b (make-temporary-file "configkit-loader7b-~a" 'directory))
+(call-with-output-file (build-path root7b "deep.config")
+  (lambda (o) (display "[p () 1]\n[p () 2]\n" o)))
+(call-with-output-file (build-path root7a "job.config")
+  (lambda (o) (display "#:extends \"@b/deep\"\n[q () 3]\n" o)))
+(parameterize ([current-config-search-heads (hash 'a root7a 'b root7b)]
+               [current-directory (find-system-path 'home-dir)])
+  (define r (resolve (load-config "@a/job")))
+  ;; 经 @b 路由的文件：议题出处回显 @b 端点，不泄真实目录、不错继承 @a
+  (define d (for/first ([i (in-list (resolved-issues r))]
+                        #:when (eq? (issue-kind i) 'duplicate-value)) i))
+  (check-equal? (hash-ref (issue-data d) 'value-at) "@b/deep.config:1")
+  ;; 自家文件按自己的进入路由（@a）显示
+  (check-true (for/or ([o (in-list (provenance-ref r 'q))])
+                (equal? (origin-srcloc o) "@a/job.config:2"))))
+(delete-directory/files root7a)
+(delete-directory/files root7b)

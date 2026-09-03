@@ -55,14 +55,14 @@ enum:
   ✗ copies: 超出闭区间
     给定:     128
     期望:     (1 .. 64)
-    值来自:   bad @ bad.config:3
-    验证器于: nightly.config:2
+    值来自:   bad @ @jobs/bad.config:3
+    验证器于: @jobs/nightly.config:2
   ✗ tune: 不在枚举集内
     给定:     peek
     期望:     ("base" "peak")
     提示:     是否想要 "peak"？
-    值来自:   bad @ bad.config:2
-    验证器于: nightly.config:3
+    值来自:   bad @ @jobs/bad.config:2
+    验证器于: @jobs/nightly.config:3
 ```
 
 ## Ergonomic: configuration that is not wrong, but not right either
@@ -120,7 +120,7 @@ is one call away:
 ```racket
 (peek-field r 'copies)
 ;; copies = 2
-;;   defaulted  nightly @ nightly.config:2
+;;   defaulted  nightly @ @jobs/nightly.config:2
 ```
 
 The sweep matches by prefix, so the misspelled `env:OMP_NUM_THREAD` was

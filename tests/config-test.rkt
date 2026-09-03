@@ -454,3 +454,28 @@
 (check-eq? (issue-field fng-issue) 'root)
 (check-regexp-match #rx"config-test\\.rkt:[0-9]+"
                     (hash-ref (issue-data fng-issue) 'value-at ""))
+
+;; ---------------------------------------------------------------------------
+;; warn #:field：全局验证器的警告同样可点名肇事字段（与 fail 对称）
+
+(define-config warn-field-global
+  #:validate/post (lambda (cfg) (warn #:reason "值偏大" #:field 'wf))
+  [wf () 9])
+(define wfg-w
+  (for/first ([w (in-list (resolved-warnings (resolve warn-field-global)))]
+              #:when (eq? (issue-kind w) 'validator-warning))
+    w))
+(check-eq? (issue-field wfg-w) 'wf)
+(check-regexp-match #rx"config-test\\.rkt:[0-9]+"
+                    (hash-ref (issue-data wfg-w) 'value-at ""))
+
+;; 同一 config 既 removed 又给值：值生效 + removed-provides 警告
+(define-config rm-base [rv () 1])
+(define-config rm-conflict
+  #:extends rm-base
+  [rv (removed)]
+  [rv () 7])
+(define r-rm (resolve rm-conflict))
+(check-equal? (resolved-value r-rm 'rv) 7)
+(check-true (for/or ([w (in-list (resolved-warnings r-rm))])
+              (eq? (issue-kind w) 'removed-provides)))

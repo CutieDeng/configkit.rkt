@@ -91,7 +91,7 @@ registry namespace); bare registry symbols are host-API-only and forbidden
 in `.config`. The head table and the registry are **not
 configuration data** (no self-privilege-escalation): the loader holds them,
 the host registers them, downstream configs can use but never extend them.
-Fake heads and registry rebinding are exactly the test-injection mechanism —
+Fake heads — including rebinding a head to a stand-in registry namespace — are exactly the test-injection mechanism —
 reroot at the data layer, never stub at the code layer.
 
 **`probe.rkt` — impurity in one place; the record is a first-class value.**
