@@ -166,3 +166,7 @@ configkit 是极简、易用、人体工程学的配置文件框架。
 
 深入（模块地图、六轴语义、安全模型、陷阱清单）见
 [contribute.zh.md](contribute.zh.md)；跑测试：`raco test tests/`。
+
+运行期只依赖 `base` 与 `sandbox-lib`（`.config` 闭合位求值），最小安装不会被
+拖去下载文档库；手册在完整 Racket 上用 `./build-docs.sh` 预渲染，产物是自包含
+HTML。取舍见 [contribute.zh.md](contribute.zh.md) 第 5 节。

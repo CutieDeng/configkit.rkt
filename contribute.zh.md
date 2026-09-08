@@ -174,3 +174,39 @@ raco test tests/          # 全量；每个模块一个 *-test.rkt
 
 改内核 → 跑 `config-test`；改文法/沙箱/路径 → 跑 `loader-test`；
 改报告形状 → 跑 `record-test` 并考虑 `format-version` 是否需要演化。
+
+## 5. 依赖策略（改 `info.rkt` 前须知）
+
+目标是最小 Racket 上 `raco pkg install` 不下载任何东西。当前声明：
+
+```racket
+(define deps       '("base" "sandbox-lib"))
+(define build-deps '("rackunit-lib"))
+(define compile-omit-paths '("scribblings"))   ; 且不声明 scribblings
+```
+
+三条决定各有理由，别凭直觉改回去：
+
+- **不声明 `scribblings`，`build-deps` 不列 `scribble-lib` / `racket-doc`。**
+  `raco pkg install` 把 build-deps 无条件并进待装集合——`pkg/private/`
+  `metadata.rkt` 的 `get-all-deps` 就是 `(append deps build-deps)`；
+  `-D/--no-docs` 只跳过编译，不跳过下载。所以逃生口不是装的时候加参数，是
+  一开始就别声明。声明一次的代价是每个最小安装拉 `scribble-lib`（闭包约
+  37M，含 `draw-lib` 4.2M、`compatibility-lib` 2.9M）加 `racket-doc`
+  （39M）。手册改在完整 Racket 的构建机上用 `./build-docs.sh` 预渲染。
+- **`sandbox-lib` 是硬依赖，别改成惰性 `dynamic-require`。**
+  `racket/sandbox` 不在 `base` 里（在 `pkgs/sandbox-lib/`），拿掉它 `deps`
+  就只剩 `base`——但只省 176K，换来的是 `loader.rkt` 的安全模型从编译期可见
+  变成运行时才暴露。真要惰性化，**缺包时必须报错，绝不能退回裸 `eval`**：
+  丢掉 security guard 与 `sandbox-memory-limit` / `sandbox-eval-limits`
+  比多一个依赖糟得多（见第 1 节 `loader.rkt` 的原则）。
+- **`rackunit-lib` 保留。** 92K，且发行版自带。测试面只有 8 个形式
+  （`check-equal?`、`check-true`、`check-eq?`、`check-false`、
+  `check-regexp-match`、`check-exn`、`check-not-false`、`check-not-exn`）
+  共 392 处断言，真要去依赖化，一个 base-only 的断言 shim 就够，测试正文
+  一行不用改——但为 92K 换掉 rackunit 的失败信息不划算。
+
+`raco pkg new` 的模板默认值恰好是
+`'("scribble-lib" "racket-doc" "rackunit-lib")`（见
+`collects/pkg/private/new.rkt`）。本包最初的 build-deps 就是它逐字抄来的，
+不是权衡的结果。看到有人「补齐」这三项时，先读这一节。

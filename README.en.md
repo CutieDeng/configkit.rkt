@@ -180,3 +180,9 @@ land under the report's `'flags` key, warning-severity by default.
 For internals (module map, the six declaration axes, the security model,
 the pitfall list) see [contribute.en.md](contribute.en.md); run the tests
 with `raco test tests/`.
+
+At run time the only dependencies are `base` and `sandbox-lib` (evaluating
+`.config` closed positions), so a minimal install is never dragged into
+downloading documentation packages. The manual is pre-rendered on full Racket
+with `./build-docs.sh`, producing self-contained HTML. The trade-off is
+recorded in [contribute.en.md](contribute.en.md) §5.

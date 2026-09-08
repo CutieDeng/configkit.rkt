@@ -245,3 +245,47 @@ raco test tests/          # full run; one *-test.rkt per module
 Kernel changes → run `config-test`; grammar/sandbox/path changes → run
 `loader-test`; report-shape changes → run `record-test` and consider whether
 `format-version` needs to move.
+
+## 5. Dependency policy (read before editing `info.rkt`)
+
+The goal is that `raco pkg install` downloads nothing on a minimal Racket.
+The current declaration:
+
+```racket
+(define deps       '("base" "sandbox-lib"))
+(define build-deps '("rackunit-lib"))
+(define compile-omit-paths '("scribblings"))   ; and no scribblings declared
+```
+
+Each of the three decisions has a reason. Do not revert them on instinct.
+
+- **No `scribblings` declaration, and no `scribble-lib` / `racket-doc` in
+  `build-deps`.** `raco pkg install` folds build-deps into the install set
+  unconditionally — `get-all-deps` in `pkg/private/metadata.rkt` is literally
+  `(append deps build-deps)`, and `-D/--no-docs` skips compilation, not the
+  download. The escape hatch is therefore not a flag at install time; it is
+  not declaring the docs in the first place. Declaring them once costs every
+  minimal install `scribble-lib` (≈37M closure, including `draw-lib` at 4.2M
+  and `compatibility-lib` at 2.9M) plus `racket-doc` (39M). The manual is
+  instead pre-rendered on a full-Racket build machine via `./build-docs.sh`.
+- **`sandbox-lib` is a hard dependency; do not make it a lazy
+  `dynamic-require`.** `racket/sandbox` is not in `base` (it lives in
+  `pkgs/sandbox-lib/`), so dropping it would reduce `deps` to just `base` —
+  but that saves 176K while turning `loader.rkt`'s security model from
+  compile-time visible into a run-time surprise. If it is ever made lazy, a
+  missing package **must raise; it must never fall back to a bare `eval`**.
+  Losing the security guard along with `sandbox-memory-limit` and
+  `sandbox-eval-limits` is far worse than one extra dependency (see the
+  `loader.rkt` principle in §1).
+- **`rackunit-lib` stays.** It is 92K and ships with the target
+  distribution. The test surface is only eight forms (`check-equal?`,
+  `check-true`, `check-eq?`, `check-false`, `check-regexp-match`,
+  `check-exn`, `check-not-false`, `check-not-exn`) across 392 assertions, so
+  a base-only assertion shim would work without touching a single test body —
+  but trading rackunit's failure reporting for 92K is not worth it.
+
+The `raco pkg new` template happens to emit exactly
+`'("scribble-lib" "racket-doc" "rackunit-lib")` (see
+`collects/pkg/private/new.rkt`). This package's original build-deps were that
+template verbatim, not a considered choice. When someone offers to "restore"
+the three, point them here first.
