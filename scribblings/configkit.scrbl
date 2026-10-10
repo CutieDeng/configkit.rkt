@@ -38,13 +38,23 @@
           [row [field-id (prop ...) maybe-value]]
           [prop introduce provide override sealed required eager removed
                 multi-introducer env
-                (default expr) (validate expr) (validate/post expr)
+                (default expr) (compute expr) (validate expr) (validate/post expr)
                 (probe expr) (help string)])]{
 定义一个具名 config。属性组强制存在（可为空 @racket[()] 即全默认）；
 值位在 @filepath{.rkt} 中为任意表达式。绑定名即标识，逐行捕获源位置入 provenance。
 同 config 同字段可写多行（属性并集、验证器累加）；但多行给值是非法配置——
 不在构造期抛错，而是记录为 @racket['duplicate-value] 议题（首个值行生效，
-后行源位置点名），由应用侧经 @racket[resolved-issues] 检查输出。}
+后行源位置点名），由应用侧经 @racket[resolved-issues] 检查输出。
+
+@racket[(compute expr)]：计算值。@racket[expr] 须求值为一元过程（收已解析视图），
+其结果就是该行提供的值——走值档，与手写值同级参与合一与覆盖，压过任何
+@racket[default]；与值位、@racket[removed]、同行 @racket[default] 互斥，可与
+@racket[required] 同行。相位①按需求值（依赖成序、循环即错）；过程可经
+@racket[config-source-ref] 查同链字段、经 @racket[config-probe-ref] 查探测记录，
+无记录时字段留未填 @racket['awaiting-probes]，@racket[(resolve c #:probes pr)]
+带记录复解即成形。表达式原文随值入 provenance（origin kind
+@racket['computed-value]）。@filepath{.config} 中同样可写，仅接受
+@racket[(lambda ...)] 形状，在沙箱内求值。}
 
 @defproc[(config [part (or/c config-object? hash? any/c)] ...) any/c]{
 并列组合。@racket[hash] 被强转为最宽松声明的匿名 config（provenance 降为整体粒度）。}
@@ -53,8 +63,9 @@
                   [#:probes probes (or/c probe-record? #f) #f]) resolved?]{
 求解：合一、六轴检查、验证管线、provenance。错误累积于
 @racket[resolved-issues]，警告于 @racket[resolved-warnings]，从不抛出配置类
-错误。@racket[#:probes] 注入探测记录供后验验证器经
-@racket[config-probe-ref] 查询（环境求值器）；纯性承诺相应为
+错误。@racket[#:probes] 注入探测记录供后验验证器与相位①的计算位经
+@racket[config-probe-ref] 查询（环境求值器）；计算位无记录时留未填
+@racket['awaiting-probes]，不记 issue。纯性承诺相应为
 "同一（配置, 探测记录）恒得同一结果"。}
 
 @deftogether[(@defproc[(resolved? [v any/c]) boolean?]

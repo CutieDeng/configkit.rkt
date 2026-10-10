@@ -322,7 +322,7 @@ EOF
   (build-path root8 name))
 
 ;; 计算值压过基座 default，且查探测记录：单遍未就绪、复解得值
-(write8! "base.config" "[copies ((default 1))]\n")
+(void (write8! "base.config" "[copies ((default 1))]\n"))
 (define compute-job
   (write8! "job.config"
            (string-append "#:extends \"base\"\n"
@@ -377,8 +377,8 @@ EOF
 (check-equal? (resolved-value (resolve (load-config-file req-compute-2rows)) 'x 'NONE)
               7)
 ;; 后代 removed 掩掉计算值 → required 重新武装（eager 档当场报）
-(write8! "reqc-base.config"
-         "[x (introduce required eager (compute (lambda (v) 7)))]\n")
+(void (write8! "reqc-base.config"
+         "[x (introduce required eager (compute (lambda (v) 7)))]\n"))
 (define req-compute-rm
   (write8! "reqc-rm.config"
            (string-append "#:extends \"reqc-base\"\n"

@@ -1,6 +1,6 @@
 #lang racket
 
-;; Host probing (docs/render-flow.md).  resolve stays pure and merely
+;; Host probing.  resolve stays pure and merely
 ;; carries each field's declared prober; probe-fields is the one explicitly
 ;; impure step.  A field is probed iff it is unfilled AND has a declared
 ;; prober — there is no marker value: an explicit value always wins.

@@ -211,7 +211,7 @@
 (check-eq? (hash-ref pv 'prober) 'probe-ncpus)
 (check-eq? (hash-ref (car (hash-ref rep 'probe-failures)) 'field) 'gcc-ver)
 (define path (make-temporary-file "configkit-probe-~a.rktd"))
-(write-report rep path)
+(void (write-report rep path))
 (check-equal? (with-input-from-file path read) rep)
 (delete-file path)
 

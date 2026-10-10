@@ -25,6 +25,18 @@ configkit 是极简、易用、人体工程学的配置文件框架。
   (resolved-value r 'copies))    ; => 2（默认值生效）
 ```
 
+值也可以由代码算出：`(compute (lambda (v) …))` 写在属性组里、值位留空，
+结果与手写值同级（压过 default）。lambda 在沙箱里跑，只能查同链字段
+（`config-source-ref`）和宿主探测记录（`config-probe-ref`）：
+
+```racket
+#:extends "nightly"
+[copies (override (compute (lambda (v) (- (config-probe-ref v 'host-ncpus 2) 1))))]
+```
+
+没有探测记录时该字段留未填（`'awaiting-probes`），`(resolve c #:probes pr)`
+带记录复解即成形；表达式原文随值进 provenance。
+
 ## 易用：配置写错时
 
 `jobs/bad.config` 继承上面的文件，写错两处：

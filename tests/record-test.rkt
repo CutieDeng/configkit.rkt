@@ -55,7 +55,7 @@
 (check-eq? (hash-ref report 'verdict) 'failed)
 
 (define path (make-temporary-file "configkit-report-~a.rktd"))
-(write-report report path)
+(void (write-report report path))
 (define back (with-input-from-file path read))
 (check-equal? back report)                     ; 往返一致
 (check-eq? (hash-ref back 'verdict) 'failed)

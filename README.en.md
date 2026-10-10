@@ -26,6 +26,21 @@ Load and read from the application:
   (resolved-value r 'copies))    ; => 2 (the default applies)
 ```
 
+A value can also be computed: `(compute (lambda (v) …))` goes in the
+property group with the value position left empty, and the result ranks
+with hand-written values (it beats a default). The lambda runs sandboxed
+and can query only sibling fields (`config-source-ref`) and the host probe
+record (`config-probe-ref`):
+
+```racket
+#:extends "nightly"
+[copies (override (compute (lambda (v) (- (config-probe-ref v 'host-ncpus 2) 1))))]
+```
+
+With no probe record the field stays unfilled (`'awaiting-probes`);
+`(resolve c #:probes pr)` settles it, and the expression text goes into
+provenance with the value.
+
 ## Friendly: when the configuration is wrong
 
 `jobs/bad.config` extends the file above, with two mistakes:
