@@ -22,6 +22,8 @@
          make-entry
          present
          normalize-value
+         (struct-out computed)
+         (struct-out probes-unready)
          resolve
          resolved?
          resolved-ok?
@@ -33,6 +35,9 @@
          resolved-class
          resolved-probers
          resolved-probes
+         resolved-view?
+         resolved-view-probes
+         resolved-view-record-probe-read!
          resolved-probe-reads
          resolved-record-probe-read!
          resolved-skipped
@@ -58,13 +63,27 @@
 ;; including the boolean #f itself.
 (struct present (v) #:transparent)
 
+;; A computed value: the `(compute <lambda>)` property's payload, sitting in
+;; the VALUE slot — it is a provider, not a default, so it wins over every
+;; default and loses to nothing but a more-derived provider.  Evaluated in
+;; phase ① like a computed default (demand-driven, cycle-detected); `source`
+;; is the expression text, archived in provenance so a value produced by
+;; code is as auditable as one written literally.
+(struct computed (proc source) #:transparent)
+
+;; Raised by config-probe-ref when a phase-① computation queries the probe
+;; record and no record is in scope (single-pass resolve).  Not a failure:
+;; the dependency is not ready, so the field stays unfilled ('awaiting-probes)
+;; and the two-pass resolve (pure → probe → resolve #:probes) fills it.
+(struct probes-unready (field) #:transparent)
+
 ;; One field row.  perm is a non-empty subset of '(introduce provide
 ;; override): first declaration / first provision / changing an existing
 ;; decision.  The bare group () carries all three permissions; narrowing to
 ;; one is a statement of intent that buys the matching check.
 (struct entry
   (perm multi? sealed? required? eager? removed? env?
-   value        ; (present v) | #f
+   value        ; (present v) | #f ; v = computed struct → phase-① computed value
    default      ; (present datum-or-procedure) | #f ; procedure = computed
    validators   ; (listof vdecl)
    probe        ; procedure | #f  (host probing; not run by resolve)
@@ -190,7 +209,8 @@
       [(memq d '(introduce provide override sealed required eager removed
                  multi-introducer env))
        (values d #f)]
-      [(and (pair? d) (memq (car d) '(default validate validate/post probe help)))
+      [(and (pair? d) (memq (car d) '(default compute validate validate/post
+                                      probe help)))
        (values (car d) (cadr (syntax->list p)))]
       [else (raise-syntax-error 'define-config "unknown property" p)]))
 
@@ -210,6 +230,7 @@
     (define value (and (= (length parts) 3) (caddr parts)))
     (define flags '())
     (define default-e #f)
+    (define compute-e #f)
     (define validators '())
     (define probe-e #f)
     (define help-e #f)
@@ -217,6 +238,7 @@
       (define-values (kind payload) (parse-prop p))
       (case kind
         [(default) (set! default-e payload)]
+        [(compute) (set! compute-e payload)]
         [(validate)
          (set! validators (cons #`(vdecl 'immediate #,payload
                                           #,(stx-srcloc p))
@@ -233,6 +255,27 @@
     (when (and value (or (memq 'required flags) (memq 'removed flags)))
       (raise-syntax-error 'define-config
                           "required/removed rows must not give a value" row-stx))
+    ;; compute 是提供者，与值位/removed 同轴互斥；与同行 default 同写是
+    ;; 意图不清（跨配置的祖先 default 照常被压，那是格的事）。
+    ;;
+    ;; required 同行放行：required 是需求方标记而非提供者，它与提供者的
+    ;; 组合有意义且引擎本就支持——同一 config 拆两行写（[x (required)] +
+    ;; [x (provide (compute ...))]）一直是合法的，语义与同行写完全相同。
+    ;; 值档提供者可被后代 removed 掩掉，掩掉后 required 重新武装（eager
+    ;; 档当场报 eager-required-missing），所以「必填 + 我给一个算出来的
+    ;; 值」不是自相矛盾，而是一条可用的声明。对照 (default ...)：默认档
+    ;; 撤销语义够不到，required 与之同行才是永不生效的空条款。
+    (when compute-e
+      (when value
+        (raise-syntax-error 'define-config
+                            "(compute ...) 行不得再给值位" row-stx))
+      (when (memq 'removed flags)
+        (raise-syntax-error 'define-config
+                            "(compute ...) 不能与 removed 同行" row-stx))
+      (when default-e
+        (raise-syntax-error 'define-config
+                            "(compute ...) 与同行 (default ...) 意图冲突：计算值走值档，默认值永不生效"
+                            row-stx)))
     #`(cons '#,field
             (make-entry #:perm #,perm
                         #:multi? #,(and (memq 'multi-introducer flags) #t)
@@ -241,9 +284,12 @@
                         #:eager? #,(and (memq 'eager flags) #t)
                         #:removed? #,(and (memq 'removed flags) #t)
                         #:env? #,(and (memq 'env flags) #t)
-                        #:value #,(if value
-                                      #`(present (normalize-value #,value))
-                                      #'#f)
+                        #:value #,(cond
+                                    [compute-e
+                                     #`(present (computed #,compute-e
+                                                          #,(format "~s" (syntax->datum compute-e))))]
+                                    [value #`(present (normalize-value #,value))]
+                                    [else #'#f])
                         #:default #,(if default-e
                                         #`(present (normalize-value #,default-e))
                                         #'#f)
@@ -545,6 +591,10 @@
   (define values-out (make-hasheq))
   (define origins-out (make-hasheq))
   (define unfilled-out (make-hasheq))
+  (define pending-computed (make-hasheq))  ; field -> computed（相位①的待求值）
+  ;; 探测查询名单：相位①的视图与最终 resolved 共用一个盒子，计算位与
+  ;; 后验验证器的查询落进同一份账。
+  (define probe-reads-box (box '()))
   (define env-set (mutable-seteq))
   (define explicit-set (mutable-seteq))
   (define probers-out (make-hasheq))
@@ -743,6 +793,23 @@
             #f])]))
 
     (cond
+      [(and final-value (computed? (present-v final-value)))
+       ;; 计算值：提供者在场但尚未成形，交相位① 按需求值。default 照常
+       ;; 让位——计算值走值档，不因"还没算"而回落默认档。声明处取胜出
+       ;; 提供者的 origin（值位的赢家恒记 'provided）。
+       (define won
+         (for/first ([o (in-list origins)]
+                     #:when (eq? (origin-kind o) 'provided))
+           o))
+       (hash-set! pending-computed field
+                  (list (present-v final-value)
+                        (and won (origin-config-name won))
+                        (and won (origin-srcloc won))))
+       (hash-set! unfilled-out field 'computed-pending)
+       (set-add! explicit-set field)
+       (when chosen-default
+         (add-origin! 'default-yielded (car chosen-default)
+                      (cdr chosen-default) #f))]
       [final-value
        (hash-set! values-out field final-value)
        (set-add! explicit-set field)
@@ -790,7 +857,8 @@
       (define o (for/last ([o (in-list (hash-ref origins-out (issue-field i)
                                                  '()))]
                            #:when (memq (origin-kind o)
-                                        '(provided defaulted computed)))
+                                        '(provided defaulted computed
+                                          computed-value)))
                   o))
       (define d2 (if o
                      (hash-set* d1
@@ -808,41 +876,58 @@
   (define cycle-fields (mutable-seteq))
   (define computing (make-hasheq))
   (define view
-    (make-resolved-view (lambda () values-out) env-set explicit-set))
+    (make-resolved-view (lambda () values-out) env-set explicit-set
+                        probes probe-reads-box))
+  ;; 两类计算位共用这一段：计算值（值档，pending-computed 里）与计算默认
+  ;; 值（默认档，从 origin 回查声明处）。差别只在取哪个过程、成功后记哪种
+  ;; origin，失败时报哪种 issue。
+  (define (computed-site field)
+    ;; → (values proc config-name srcloc success-kind failure-kind source-text)
+    (define c (hash-ref pending-computed field #f))
+    (cond
+      [c (values (computed-proc (car c)) (cadr c) (caddr c)
+                 'computed-value 'computed-value-failed
+                 (computed-source (car c)))]
+      [else
+       (define pending
+         (for/first ([o (in-list (hash-ref origins-out field '()))]
+                     #:when (eq? (origin-kind o) 'computed-default-pending))
+           o))
+       (define proc
+         (for*/first ([n (in-list nodes)]
+                      #:when (eq? (config-object-name n)
+                                  (origin-config-name pending))
+                      [e (in-value (merged-entry n field))]
+                      #:when (and e (entry-default e)))
+           (present-v (entry-default e))))
+       (values proc (origin-config-name pending) (origin-srcloc pending)
+               'computed 'computed-default-failed #f)]))
   (define (force-field! field)
     (when (eq? (hash-ref unfilled-out field #f) 'computed-pending)
       (when (hash-ref computing field #f)
-        (add-issue! (issue 'computed-cycle field "计算默认值循环依赖" (hasheq)))
+        (add-issue! (issue 'computed-cycle field "计算位循环依赖" (hasheq)))
         (set-add! cycle-fields field)
         (hash-set! unfilled-out field 'computed-cycle))
       (unless (hash-ref computing field #f)
         (hash-set! computing field #t)
         (define os (hash-ref origins-out field '()))
-        (define pending
-          (for/first ([o (in-list os)]
-                      #:when (eq? (origin-kind o) 'computed-default-pending))
-            o))
-        (define proc
-          (for*/first ([n (in-list nodes)]
-                       #:when (eq? (config-object-name n)
-                                   (origin-config-name pending))
-                       [e (in-value (merged-entry n field))]
-                       #:when (and e (entry-default e)))
-            (present-v (entry-default e))))
-        (with-handlers ([exn:fail?
-                         (lambda (ex)
-                           (add-issue! (issue 'computed-default-failed field
-                                              (exn-message ex) (hasheq)))
-                           (hash-set! unfilled-out field 'no-provider))])
+        (define-values (proc site-name site-at success-kind failure-kind src-text)
+          (computed-site field))
+        (with-handlers
+            ([probes-unready?
+              ;; 依赖未就绪不是失败：留未填，两段式复解时再算。
+              (lambda (_) (hash-set! unfilled-out field 'awaiting-probes))]
+             [exn:fail?
+              (lambda (ex)
+                (add-issue! (issue failure-kind field (exn-message ex) (hasheq)))
+                (hash-set! unfilled-out field 'no-provider))])
           (define v (proc view))
           (unless (set-member? cycle-fields field)
             (hash-set! values-out field (present v))
             (hash-remove! unfilled-out field)
             (hash-set! origins-out field
-                       (append os (list (origin 'computed
-                                                (origin-config-name pending)
-                                                (origin-srcloc pending)
-                                                #f)))))))))
+                       (append os (list (origin success-kind site-name
+                                                site-at src-text)))))))))
   (set-box! (resolved-view-force-box view) force-field!)
   (cond
     [merge-clean?
@@ -887,7 +972,7 @@
 
   (define result
     (resolved values-out origins-out unfilled-out env-set
-              '() '() '() explicit-set probers-out probes (box '())
+              '() '() '() explicit-set probers-out probes probe-reads-box
               (composition-id top)))
   (define (run-post! field vd)
     (apply-verdict! (call-validator (vdecl-proc vd) result)
@@ -908,9 +993,12 @@
                [warnings (reverse warnings)]
                [skipped (reverse skipped)]))
 
-;; A mutable view used during the computed-default phase: reads of a
-;; computed-pending field force it first (demand-driven dependency order).
-(struct resolved-view (values-thunk env explicit force-box)
+;; A mutable view used during the computed phase: reads of a computed-pending
+;; field force it first (demand-driven dependency order).  It carries the
+;; probe record and the same query roster as the resolved, so a phase-①
+;; computation may query probes and every query it makes is observed.
+(struct resolved-view (values-thunk env explicit force-box probes
+                       probe-reads-box)
   #:methods gen:config-source
   [(define (config-source-suite v)
      (define p (hash-ref ((resolved-view-values-thunk v)) 'suite #f))
@@ -927,6 +1015,14 @@
    (define (config-source-keys v)
      (hash-keys ((resolved-view-values-thunk v))))])
 
-(define (make-resolved-view values-thunk env explicit)
-  (resolved-view values-thunk env explicit (box #f)))
+(define (make-resolved-view values-thunk env explicit
+                            [probes #f] [probe-reads-box (box '())])
+  (resolved-view values-thunk env explicit (box #f) probes probe-reads-box))
+
+;; Same roster discipline as resolved-record-probe-read!: first query wins,
+;; hit/miss recorded once per field.
+(define (resolved-view-record-probe-read! v field hit?)
+  (define b (resolved-view-probe-reads-box v))
+  (unless (assq field (unbox b))
+    (set-box! b (cons (list field hit?) (unbox b)))))
 

@@ -3,7 +3,8 @@
 (require (except-in rackunit fail)
          "../config.rkt"
          "../source.rkt"
-         "../loader.rkt")
+         "../loader.rkt"
+         (only-in "../probe.rkt" make-probes))
 
 (define (write-config! path text)
   (make-parent-directory* path)
@@ -310,3 +311,85 @@ EOF
                 (equal? (origin-srcloc o) "@a/job.config:2"))))
 (delete-directory/files root7a)
 (delete-directory/files root7b)
+
+;; ---------------------------------------------------------------------------
+;; (compute ...)：值档的闭合位置——沙箱内求值、原文入档、同轴互斥
+
+(define root8 (make-temporary-file "configkit-loader8-~a" 'directory))
+(define (write8! name text)
+  (call-with-output-file (build-path root8 name) #:exists 'replace
+    (lambda (o) (display text o)))
+  (build-path root8 name))
+
+;; 计算值压过基座 default，且查探测记录：单遍未就绪、复解得值
+(write8! "base.config" "[copies ((default 1))]\n")
+(define compute-job
+  (write8! "job.config"
+           (string-append "#:extends \"base\"\n"
+                          "[copies (override (compute (lambda (v)"
+                          " (config-probe-ref v 'cores 0))))]\n")))
+(define rc0 (resolve (load-config-file compute-job)))
+(check-eq? (hash-ref (unfilled-fields rc0) 'copies #f) 'awaiting-probes)
+(check-equal? (resolved-issues rc0) '())
+(define rc1 (resolve (load-config-file compute-job)
+                     #:probes (make-probes (hash 'cores 24))))
+(check-equal? (resolved-value rc1 'copies 'NONE) 24)
+;; 表达式原文随值进 provenance（报告仍是无闭包数据）
+(check-true (for/or ([o (in-list (provenance-ref rc1 'copies))])
+              (and (eq? (origin-kind o) 'computed-value)
+                   (regexp-match? #rx"config-probe-ref" (origin-info o)))))
+
+;; 沙箱围栏对计算位同样生效（限时/限内存/无文件系统），失败是数据
+(define compute-denied
+  (write8! "denied.config"
+           "[x ((compute (lambda (v) (if (file-exists? \"/etc/hosts\") 1 0))))]\n"))
+(define rcd (resolve (load-config-file compute-denied)))
+(check-true (for/or ([i (in-list (resolved-issues rcd))])
+              (and (eq? (issue-kind i) 'computed-value-failed)
+                   (regexp-match? #rx"access denied" (issue-message i)))))
+
+;; 同轴互斥：值位 / removed / 同行 default，三条在装载期拦
+(for ([row (in-list
+            (list "[x (override (compute (lambda (v) 1))) 8]\n"
+                  "[x (override (compute (lambda (v) 1)) (default 2))]\n"
+                  "[x (removed (compute (lambda (v) 1)))]\n"))]
+      [msg (in-list (list #rx"不得再给值位"
+                          #rx"意图冲突"
+                          #rx"不能与 removed 同行"))])
+  (define p (write8! "bad.config" row))
+  (check-exn msg (lambda () (load-config-file p))))
+
+;; required 与 compute 同行放行：required 是需求方标记不是提供者，组合
+;; 有意义——值照常算出，值被后代 removed 掩掉后 required 重新武装。
+(define req-compute
+  (write8! "reqc.config"
+           "[x (introduce required (compute (lambda (v) 7)))]\n"))
+(define rrq (resolve (load-config-file req-compute)))
+(check-equal? (resolved-value rrq 'x 'NONE) 7)
+(check-equal? (resolved-issues rrq) '())
+(check-true (for/or ([o (in-list (provenance-ref rrq 'x))])
+              (eq? (origin-kind o) 'computed-value)))
+;; 同 config 拆两行写语义相同（放行前唯一的写法）
+(define req-compute-2rows
+  (write8! "reqc2.config"
+           (string-append "[x (required)]\n"
+                          "[x (provide (compute (lambda (v) 7)))]\n")))
+(check-equal? (resolved-value (resolve (load-config-file req-compute-2rows)) 'x 'NONE)
+              7)
+;; 后代 removed 掩掉计算值 → required 重新武装（eager 档当场报）
+(write8! "reqc-base.config"
+         "[x (introduce required eager (compute (lambda (v) 7)))]\n")
+(define req-compute-rm
+  (write8! "reqc-rm.config"
+           (string-append "#:extends \"reqc-base\"\n"
+                          "[x (removed)]\n")))
+(define rrm (resolve (load-config-file req-compute-rm)))
+(check-eq? (hash-ref (unfilled-fields rrm) 'x #f) 'required)
+(check-true (for/or ([i (in-list (resolved-issues rrm))])
+              (eq? (issue-kind i) 'eager-required-missing)))
+
+;; 形状判定：只收 (lambda ...)，组合子应用/字面量不适用
+(check-exn #rx"只接受 \\(lambda"
+           (lambda ()
+             (load-config-file (write8! "shape.config" "[x ((compute 5))]\n"))))
+(delete-directory/files root8)

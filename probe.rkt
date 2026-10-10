@@ -3,8 +3,10 @@
 ;; Host probing (docs/render-flow.md).  resolve stays pure and merely
 ;; carries each field's declared prober; probe-fields is the one explicitly
 ;; impure step.  A field is probed iff it is unfilled AND has a declared
-;; prober — there is no marker value: an explicit value always wins, and
-;; masking a value with (removed) re-opens the field to probing.
+;; prober — there is no marker value: an explicit value always wins.
+;; (removed) masks a VALUE, so it re-opens probing only when the field has no
+;; default to fall back to; with a default in the chain the default wins and
+;; the prober still does not run.
 ;;
 ;; The probe record is a first-class value: probe-fields produces it,
 ;; make-probes hand-builds a fake one for injection, probes-set updates one
@@ -97,22 +99,36 @@
         [(procedure? fail-result) (fail-result)]
         [else fail-result]))
 
-;; Posterior validators as environment evaluators (docs/render-flow.md §Ⅱ):
-;; query the probe record injected via (resolve _ #:probes pr), mirroring
-;; config-env-ref.  Meaningful only on a resolved — computed defaults (the
-;; pure half of the pipeline) cannot see probes.  With no record injected,
-;; every field is missing; a validator typically answers that with skip.
+;; Query the probe record injected via (resolve _ #:probes pr), mirroring
+;; config-env-ref.  Two callers, two policies for "no record in scope":
+;; a posterior validator (resolved) sees every field as a miss and typically
+;; answers with skip; a phase-① computation (resolved view) gets the
+;; probes-unready signal instead, because a computed value must not silently
+;; fall back to a placeholder — it stays unfilled until the record exists.
 (define (config-probe-ref r field [fail-result source-missing])
-  (unless (resolved? r)
-    (raise-argument-error 'config-probe-ref
-                          "resolved (posterior phases only)" r))
-  (define pr (resolved-probes r))
+  (define-values (pr record!)
+    (cond
+      [(resolved? r)
+       (values (resolved-probes r)
+               (lambda (f hit?) (resolved-record-probe-read! r f hit?)))]
+      [(resolved-view? r)
+       ;; 相位①的计算位（计算值 / 计算默认值）：无探测记录时依赖未就绪
+       ;; ——抛信号让引擎把该字段留作未填（'awaiting-probes），不兜底、
+       ;; 不记账。未就绪不是未命中；两段式复解（纯求解 → 实探 → 带记录
+       ;; 复解）里同一表达式再算一次即得值。
+       (unless (probe-record? (resolved-view-probes r))
+         (raise (probes-unready field)))
+       (values (resolved-view-probes r)
+               (lambda (f hit?) (resolved-view-record-probe-read! r f hit?)))]
+      [else
+       (raise-argument-error 'config-probe-ref
+                             "resolved or resolved view" r)]))
   (define hit?
     (and (probe-record? pr)
          (hash-has-key? (probe-record-entries pr) field)))
-  ;; 查询本身是被感知的数据：谁查过、命中与否，入 resolved 的查询名单
-  ;; （报告 'probe-reads/'probe-misses）——沙箱验证器的查询同样被看见。
-  (resolved-record-probe-read! r field hit?)
+  ;; 查询本身是被感知的数据：谁查过、命中与否，入查询名单（报告
+  ;; 'probe-reads/'probe-misses）——沙箱代码的查询同样被看见。
+  (record! field hit?)
   (if hit?
       (probe-ref pr field fail-result)
       (cond [(procedure? fail-result) (fail-result)]

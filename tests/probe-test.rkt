@@ -145,13 +145,61 @@
                         'probe-misses)
               '(host-cores))
 
-;; 纯半段（计算默认）不得查探测：view 上调用即契约错，降级为记录条目
+;; 相位①的计算位可查探测记录，无记录时是"依赖未就绪"而非失败：字段留
+;; 未填（'awaiting-probes）、不记 issue、不进查询名单；带记录复解即得值。
+;; 纯性承诺照旧——同一（配置, 探测记录）恒得同一结果。
 (define-config probe-in-computed
   [x ((default (lambda (v) (config-probe-ref v 'k 0))))])
 (define rpc (resolve probe-in-computed))
-(check-true (for/or ([i (in-list (resolved-issues rpc))])
-              (and (eq? (issue-kind i) 'computed-default-failed)
-                   (regexp-match? #rx"config-probe-ref" (issue-message i)))))
+(check-equal? (resolved-issues rpc) '())
+(check-eq? (hash-ref (unfilled-fields rpc) 'x #f) 'awaiting-probes)
+(check-equal? (resolved-probe-reads rpc) '())
+(define rpc2 (resolve probe-in-computed #:probes (make-probes (hash 'k 7))))
+(check-equal? (resolved-value rpc2 'x 'NONE) 7)
+(check-equal? (resolved-probe-reads rpc2) '((k #t)))
+
+;; 计算值（(compute ...)，值档）：压过基座 default，未就绪同样留未填
+(define-config compute-base [n ((default 1))])
+(define-config compute-job #:extends compute-base
+  [n (override (compute (lambda (v) (config-probe-ref v 'cores 0))))])
+(check-eq? (hash-ref (unfilled-fields (resolve compute-job)) 'n #f)
+           'awaiting-probes)          ; default 不顶替未就绪的计算值
+(define rcv (resolve compute-job #:probes (make-probes (hash 'cores 12))))
+(check-equal? (resolved-value rcv 'n 'NONE) 12)
+(check-true (config-source-explicit? rcv 'n))   ; 计算值是提供者，非默认
+(check-true (for/or ([o (in-list (provenance-ref rcv 'n))])
+              (and (eq? (origin-kind o) 'computed-value)
+                   ;; 表达式原文随值入档：代码产出的值一样可审
+                   (regexp-match? #rx"config-probe-ref" (origin-info o)))))
+
+;; required 与 compute 同行（宏侧）：required 是需求方标记不是提供者，
+;; 同行组合有意义。计算值照常成形；被后代 removed 掩掉后 required 重新
+;; 武装，eager 档当场报 eager-required-missing。
+(define-config req-compute [rc (introduce required (compute (lambda (v) 7)))])
+(define rrc (resolve req-compute))
+(check-equal? (resolved-value rrc 'rc 'NONE) 7)
+(check-equal? (resolved-issues rrc) '())
+(check-true (for/or ([o (in-list (provenance-ref rrc 'rc))])
+              (eq? (origin-kind o) 'computed-value)))
+(define-config req-compute-eager
+  [rc (introduce required eager (compute (lambda (v) 7)))])
+(define-config req-compute-rm #:extends req-compute-eager [rc (removed)])
+(define rrcm (resolve req-compute-rm))
+(check-eq? (hash-ref (unfilled-fields rrcm) 'rc #f) 'required)
+(check-true (for/or ([i (in-list (resolved-issues rrcm))])
+              (eq? (issue-kind i) 'eager-required-missing)))
+;; 掩掉的计算位不求值：provenance 里没有 computed-value
+(check-false (for/or ([o (in-list (provenance-ref rrcm 'rc))])
+               (eq? (origin-kind o) 'computed-value)))
+
+;; 并列（非派生）的两个计算值：不比较结果，直接判冲突
+(define-config compute-par-a [m ((compute (lambda (v) 1)))])
+(define-config compute-par-b [m ((compute (lambda (v) 1)))])
+(check-not-false (for/or ([i (in-list (resolved-issues
+                                       (resolve (config compute-par-a
+                                                        compute-par-b))))])
+                   (memq (issue-kind i)
+                         '(multiple-introducers unification-conflict))))
 
 ;; ---------------------------------------------------------------------------
 ;; 报告接线：'probes / 'probe-failures，format-version 2，往返

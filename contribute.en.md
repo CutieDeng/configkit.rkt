@@ -78,19 +78,22 @@ are passive records — query what you need.
 
 **`loader.rkt` — parse, execute nothing.** The `.config` grammar has no
 top-level code position; value positions are data literals, read but never
-evaluated (a lambda-shaped list is just data). Expressions exist only in the
-two closed positions (`validate`/`default`), whose contract is
-"expression → procedure", evaluated inside `racket/sandbox` (time/memory
-limits + security guard); every closure call re-enters the sandbox, so the
-limits apply at call time, not just at load time. Path references allow no
-`..` and no absolute paths; containment checking is two-stage (lexical
-normalization, then per-component symlink resolution — both must stay inside
-the equally-resolved root). `#:extends` takes exactly two forms: a downward
-relative path, or `@head/endpoint` (a head maps to a directory or to a
-registry namespace); bare registry symbols are host-API-only and forbidden
-in `.config`. The head table and the registry are **not
-configuration data** (no self-privilege-escalation): the loader holds them,
-the host registers them, downstream configs can use but never extend them.
+evaluated (a lambda-shaped list is just data — which is exactly why code
+cannot enter the value position: that would mean classifying the third
+slot by its content, against "position decides role"). Expressions exist
+only in the three closed positions (`validate`/`default`/`compute`), whose
+contract is "expression → procedure", evaluated inside `racket/sandbox`
+(time/memory limits + security guard); every closure call re-enters the
+sandbox, so the limits apply at call time, not just at load time. Path
+references allow no `..` and no absolute paths; containment checking is
+two-stage (lexical normalization, then per-component symlink resolution —
+both must stay inside the equally-resolved root). `#:extends` takes exactly
+two forms: a downward relative path, or `@head/endpoint` (a head maps to a
+directory or to a registry namespace); bare registry symbols are
+host-API-only and forbidden in `.config`. The head table and the registry
+are **not configuration data** (no self-privilege-escalation): the loader
+holds them, the host registers them, downstream configs can use but never
+extend them.
 Fake heads — including rebinding a head to a stand-in registry namespace — are exactly the test-injection mechanism —
 reroot at the data layer, never stub at the code layer.
 
@@ -99,13 +102,19 @@ reroot at the data layer, never stub at the code layer.
 (`resolved-probers`); `probe-fields` is the single explicitly impure step
 (custodian fence, timestamps, failure is data, never an interrupt). A field
 is probed iff it is unfilled AND declares `(probe p)` — **there is no marker
-value**: an explicit value beats probing, `removed` re-opens it, the same
-design move as "unfilled borrows no sentinel value". Injection =
+value**: an explicit value beats probing, the same design move as "unfilled
+borrows no sentinel value" (`removed` masks the **value**: when the field
+also has a default in the chain, the default tier takes over and probing is
+not re-opened). Injection =
 `make-probes` fake records / `probes-set` half-real updates — still
 rerooting at the data layer; `.config` must not declare probers (trusted
 host code, outside the sandbox). Posterior validators act as environment
 evaluators: `resolve #:probes` injects the record, `config-probe-ref`
-queries it (the pure half cannot); the purity promise becomes "same
+queries it (〔revised〕 phase-① computed slots may query it as well: with
+no record in scope the dependency is "not ready", so the field stays
+unfilled as `'awaiting-probes` — no fallback, no roster entry, no retreat
+to the default tier; a posterior validator with no record still sees a
+miss); the purity promise becomes "same
 (config, probe record) always yields the same result", with the typical
 two-pass flow pure-resolve → probe → re-resolve with the record. **Queries
 are observed**: every `config-probe-ref` call (misses included) enters the

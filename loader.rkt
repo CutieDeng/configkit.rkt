@@ -230,9 +230,10 @@
   (normalize-value d))
 
 (define (parse-config-props who ev props-stx)
-  ;; -> (values flags default validators help)
+  ;; -> (values flags default compute validators help)
   (define flags '())
   (define default #f)
+  (define compute #f)   ; (cons proc source-text) | #f
   (define validators '())
   (define help #f)
   ;; 带参属性的参数位：缺参是配置笔误，给带行号的用户态错误，
@@ -249,6 +250,17 @@
       [(memq d '(introduce provide override sealed required eager removed
                  multi-introducer env))
        (set! flags (cons d flags))]
+      [(and (pair? d) (eq? (car d) 'compute))
+       ;; 计算值：值档的提供者，闭合位置，与 (default <lambda>) 同一沙箱、
+       ;; 同一形状判定（只收 (lambda ...)，组合子应用不适用）。表达式原文
+       ;; 随值进 provenance——代码产出的值与手写的值一样可审。
+       (define payload (prop-payload p 'compute))
+       (define datum (syntax->datum payload))
+       (unless (and (pair? datum) (eq? (car datum) 'lambda))
+         (raise-arguments-error who "(compute ...) 只接受 (lambda ...)"
+                                "at" (stx-loc p)))
+       (set! compute (cons (sandboxed-closure ev datum (stx-loc p))
+                           (source-text datum)))]
       [(and (pair? d) (eq? (car d) 'default))
        (define payload (prop-payload p 'default))
        (set! default
@@ -280,7 +292,12 @@
       [else
        (raise-arguments-error who "unknown property in .config"
                               "at" (stx-loc p) "property" d)]))
-  (values flags default (reverse validators) help))
+  (values flags default compute (reverse validators) help))
+
+;; 表达式原文，超长截断——报告要能读，不要能撑爆。
+(define (source-text datum)
+  (define t (format "~s" datum))
+  (if (> (string-length t) 200) (string-append (substring t 0 197) "...") t))
 
 (define (parse-config-file who path)
   ;; -> (values parent-ref global-validators rows)  rows: (cons field entry)
@@ -346,11 +363,31 @@
          (raise-arguments-error who
                                 "the property group must be a parenthesized list"
                                 "at" (stx-loc (car xs))))
-       (define-values (flags default validators help)
+       (define-values (flags default compute validators help)
          (parse-config-props who ev props))
        (define value
          (and (= (length row) 3)
               (present (datum-value who (caddr row)))))
+       ;; compute 是提供者：与值位、removed 同轴互斥；与同行 default 同写
+       ;; 意图冲突（计算值走值档，同行默认值永不生效）。跨配置的祖先
+       ;; default 被压是格的正常结果，不在此拦。
+       ;;
+       ;; required 同行放行，理由见 config.rkt 同名检查处：required 是
+       ;; 需求方标记不是提供者，拆两行写一直合法且语义相同；值档被后代
+       ;; removed 掩掉后 required 重新武装。
+       (when compute
+         (when value
+           (raise-arguments-error who "(compute ...) 行不得再给值位"
+                                  "at" (stx-loc (car xs))))
+         (when (memq 'removed flags)
+           (raise-arguments-error who
+                                  "(compute ...) 不能与 removed 同行"
+                                  "at" (stx-loc (car xs))))
+         (when default
+           (raise-arguments-error
+            who
+            "(compute ...) 与同行 (default ...) 意图冲突：计算值走值档，默认值永不生效"
+            "at" (stx-loc (car xs)))))
        (define perm
          (let ([p (filter (lambda (f) (memq f '(introduce provide override))) flags)])
            (if (null? p) '(introduce provide override) p)))
@@ -367,7 +404,10 @@
                                      #:eager? (and (memq 'eager flags) #t)
                                      #:removed? (and (memq 'removed flags) #t)
                                      #:env? (and (memq 'env flags) #t)
-                                     #:value value
+                                     #:value (if compute
+                                                 (present (computed (car compute)
+                                                                    (cdr compute)))
+                                                 value)
                                      #:default default
                                      #:validators validators
                                      #:help help
