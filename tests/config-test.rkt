@@ -479,3 +479,15 @@
 (check-equal? (resolved-value r-rm 'rv) 7)
 (check-true (for/or ([w (in-list (resolved-warnings r-rm))])
               (eq? (issue-kind w) 'removed-provides)))
+
+;; ---------------------------------------------------------------------------
+;; 字段说明：取最近一处声明的 (help ...)；子配置不写 help 时沿用基片段的
+
+(define-config help-base
+  [n ((default 1) (help "副本数"))]
+  [m ((default 2))])
+(define-config help-child #:extends help-base [n (override) 4] [m ((help "子配置补的说明")) 3])
+(check-equal? (resolved-help (resolve help-child) 'n) "副本数")
+(check-equal? (resolved-help (resolve help-child) 'm) "子配置补的说明")
+(check-false (resolved-help (resolve help-base) 'm))
+(check-equal? (resolved-help (resolve help-base) 'zz 'none) 'none)

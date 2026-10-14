@@ -34,6 +34,7 @@
          resolved-id
          resolved-class
          resolved-probers
+         resolved-help
          resolved-probes
          resolved-view?
          resolved-view-probes
@@ -412,6 +413,7 @@
     explicit     ; seteq of fields with a non-default provider
     probers      ; hash field -> declared prober proc; carried, never run by
                  ; resolve — probe-fields (probe.rkt) is the impure step
+    helps        ; hash field -> declared (help "...") text, nearest declaration
     probes       ; probe record injected via (resolve _ #:probes pr), or #f;
                  ; posterior validators query it through config-probe-ref
     probe-reads-box  ; box of (list field hit?) newest-first, deduped —
@@ -449,6 +451,10 @@
   (resolved-value r 'class #f))
 
 ;; 探测查询的感知面：首查序名单，条目 (list 字段 命中?)。
+;; 字段的说明文字（声明处的 (help "...")），没有 → default
+(define (resolved-help r field [default #f])
+  (hash-ref (resolved-helps r) field default))
+
 (define (resolved-probe-reads r)
   (reverse (unbox (resolved-probe-reads-box r))))
 
@@ -598,6 +604,7 @@
   (define env-set (mutable-seteq))
   (define explicit-set (mutable-seteq))
   (define probers-out (make-hasheq))
+  (define helps-out (make-hasheq))
   (define post-validators '())   ; (list field vdecl)
   (define immediate-validators '())
 
@@ -624,6 +631,11 @@
                               #:when (entry-probe (cdr ne)))
                     (entry-probe (cdr ne)))])
       (when prober (hash-set! probers-out field prober)))
+    ;; Declared help, same shadowing: a child's (help ...) replaces the base's.
+    (let ([h (for/first ([ne (in-list touching)]
+                         #:when (entry-help (cdr ne)))
+               (entry-help (cdr ne)))])
+      (when h (hash-set! helps-out field h)))
     (for ([ne (in-list touching)])
       (for ([vd (in-list (entry-validators (cdr ne)))])
         (if (eq? (vdecl-kind vd) 'post)
@@ -976,7 +988,7 @@
 
   (define result
     (resolved values-out origins-out unfilled-out env-set
-              '() '() '() explicit-set probers-out probes probe-reads-box
+              '() '() '() explicit-set probers-out helps-out probes probe-reads-box
               (composition-id top)))
   (define (run-post! field vd)
     (apply-verdict! (call-validator (vdecl-proc vd) result)
