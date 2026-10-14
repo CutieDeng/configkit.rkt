@@ -242,15 +242,23 @@
     (define v (hash-ref d key #f))
     (if v (format "    ~a~a\n" label
                   (if (string? v) v (format "~s" v))) ""))
+  ;; 给定值按写法原样显示：字符串带引号，"8" 与 8 看得出差别
+  (define (given-line)
+    (if (hash-has-key? d 'given)
+        (format "    给定:     ~s\n" (hash-ref d 'given))
+        ""))
   (string-append
    (format "  ✗ ~a: ~a\n" (issue-field i) (issue-message i))
-   (line 'given      "给定:     ")
+   (given-line)
    (line 'expected   "期望:     ")
    (line 'hint       "提示:     ")
-   (if (and (hash-ref d 'value-from #f) (hash-ref d 'value-at #f))
-       (format "    值来自:   ~a @ ~a\n"
-               (hash-ref d 'value-from) (hash-ref d 'value-at))
-       "")
+   (cond
+     [(and (hash-ref d 'value-from #f) (hash-ref d 'value-at #f))
+      (format "    值来自:   ~a @ ~a\n"
+              (hash-ref d 'value-from) (hash-ref d 'value-at))]
+     ;; 合并期的意图类错误（dangling、provide 冲突、sealed）只记写入位置
+     [(hash-ref d 'at #f) (format "    位置:     ~a\n" (hash-ref d 'at))]
+     [else ""])
    (line 'validator-at "验证器于: ")))
 
 (define (explain-resolved r)

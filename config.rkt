@@ -662,11 +662,15 @@
                                       (not (masked? anc))))
                (cons anc ae)))
            ;; An ancestor default also legitimizes override: the spec names
-           ;; "链内提供者或 schema 默认值" as valid override targets.
+           ;; "链内提供者或 schema 默认值" as valid override targets.  A declared
+           ;; prober counts the same way: the probed value is the fallback the
+           ;; host supplies when nobody writes one, so writing a value replaces
+           ;; it — override is the accurate claim (provide stays legal too:
+           ;; no value provider exists in the chain).
            (define ancestor-default?
              (for*/or ([anc (in-list (chain-ancestors node))]
                        [ae (in-value (merged-entry anc field))])
-               (and ae (entry-default ae) #t)))
+               (and ae (or (entry-default ae) (entry-probe ae)) #t)))
            ;; Any ancestor declaration at all — what a declared provide
            ;; requires (its absence is the field-name-typo signal).
            (define ancestor-declared?

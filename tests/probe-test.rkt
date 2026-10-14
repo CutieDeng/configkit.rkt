@@ -240,3 +240,24 @@
   (check-true (resolved-ok? rq) (format "~a" (resolved-issues rq)))
   (check-equal? (resolved-probe-reads rq) '((host-cores #t))))
 (delete-directory/files root)
+
+;; ---------------------------------------------------------------------------
+;; 有探测器的字段：探测值是宿主给的兜底值，写值即替换它——override 与 provide
+;; 都合法，写的值压过探测；没有探测器、没有缺省、也没有提供者的字段 override 仍判悬空
+
+(define-config probed-override #:extends hw-base [ncpus (override) 4] [plain () "x"])
+(define-config probed-provide #:extends hw-base [ncpus (provide) 4] [plain () "x"])
+(for ([c (list probed-override probed-provide)])
+  (define rc (resolve c #:probes (probe-fields (resolve c))))
+  (check-true (resolved-ok? rc))
+  (check-equal? (resolved-value rc 'ncpus) 4)
+  (check-equal? (config-source-ref (with-probes rc (resolved-probes rc)) 'ncpus) 4))
+(define-config plain-override #:extends hw-base [plain (override) "x"])
+(check-true (for/or ([i (in-list (resolved-issues (resolve plain-override)))])
+              (and (eq? (issue-kind i) 'dangling-override) (eq? (issue-field i) 'plain))))
+
+;; explain：给定值按写法显示（字符串带引号）；意图类错误给出写入位置
+(define-config typed-base [n ((default 1) (validate (lambda (v) (or (exact-positive-integer? v) (fail #:reason "期望正整数" #:given v)))))])
+(define-config typed-job #:extends typed-base [n (override) "8"])
+(check-regexp-match #rx"给定:     \"8\"" (explain-resolved (resolve typed-job)))
+(check-regexp-match #rx"位置:     .*probe-test" (explain-resolved (resolve plain-override)))

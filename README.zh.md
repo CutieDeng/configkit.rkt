@@ -67,7 +67,7 @@ configkit 是极简、易用、人体工程学的配置文件框架。
     值来自:   bad @ @jobs/bad.config:3
     验证器于: @jobs/nightly.config:2
   ✗ tune: 不在枚举集内
-    给定:     peek
+    给定:     "peek"
     期望:     ("base" "peak")
     提示:     是否想要 "peak"？
     值来自:   bad @ @jobs/bad.config:2

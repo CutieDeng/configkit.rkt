@@ -19,7 +19,8 @@
 @itemlist[
  @item{config 是@bold{部分记录}：未填字段是一等状态，由消费者按需裁决（noneager）。}
  @item{两种组合：@racket[#:extends] 继承链（链内改值建议声明
-       @racket[override]：表态换空覆盖检查；裸 @racket[()] 亦有覆盖许可，
+       @racket[override]：表态换空覆盖检查——覆盖目标是链内的值、缺省值或探测器
+       （探测值是宿主给的兜底值，写值即替换它）；裸 @racket[()] 亦有覆盖许可，
        @racket[sealed] 同拦）；
        @racket[(config a b ...)] 并列（无序可交换，具体值冲突即错，无 force）。}
  @item{六轴默认：@racket[{introduce provide override}]、singlenew、open、noneager。}
