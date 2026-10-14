@@ -130,7 +130,7 @@ configkit 是极简、易用、人体工程学的配置文件框架。
 
 扫掠只认前缀，拼错的 `env:OMP_NUM_THREAD` 也被当真用掉。声明白名单
 守卫，与任意配置并列组合，不支持的成员进警告（`require-known` 为
-错误版）：
+错误版）；更名或移除的旧成员用 `#:renamed` 登记，出现时点名报错并给出新名或说明：
 
 ```racket
 (define-config env-guard

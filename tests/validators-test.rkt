@@ -129,6 +129,34 @@
   #:validate/post (require-known #rx"^env:" 'env:OMP_NUM_THREADS))
 (check-true (resolved-ok? (resolve (config env-clean env-guard/rx))))
 
+;; #:renamed：退役成员点名报错（更名给新名，移除给说明），不再是"不受支持"警告；
+;; 现役成员与拼错的照旧
+(define-config old-names
+  [env:OMP_NUM_THREADS (introduce) "8"]
+  [env:OMP_THREADS     (introduce) "4"]      ; 已更名
+  [env:KMP_LEGACY      (introduce) "1"]      ; 已移除
+  [env:OMP_NUM_THREAD  (introduce) "2"])     ; 拼错
+(define-config env-guard/renamed
+  #:validate/post (warn-unknown 'env: 'env:OMP_NUM_THREADS
+                                #:renamed '((env:OMP_THREADS . env:OMP_NUM_THREADS)
+                                            (env:KMP_LEGACY . "不再支持 KMP 变量，删掉此行"))))
+(define rr (resolve (config old-names env-guard/renamed)))
+(check-false (resolved-ok? rr))
+(define (issue-for f) (findf (lambda (i) (eq? (issue-field i) f)) (resolved-issues rr)))
+(check-equal? (issue-message (issue-for 'env:OMP_THREADS)) "env:OMP_THREADS 已更名为 env:OMP_NUM_THREADS")
+(check-equal? (hash-ref (issue-data (issue-for 'env:OMP_THREADS)) 'hint) "改写为 [env:OMP_NUM_THREADS ...]")
+(check-equal? (issue-message (issue-for 'env:KMP_LEGACY)) "env:KMP_LEGACY 已移除")
+(check-equal? (hash-ref (issue-data (issue-for 'env:KMP_LEGACY)) 'hint) "不再支持 KMP 变量，删掉此行")
+(check-equal? (length (resolved-issues rr)) 2)                 ; 退役成员不再重复报"不受支持"
+(check-equal? (length (resolved-warnings rr)) 1)               ; 拼错的照旧是警告
+(check-regexp-match #rx"env:OMP_NUM_THREAD 不受支持" (issue-message (car (resolved-warnings rr))))
+;; hash 形态等价；require 版同样认 #:renamed
+(define-config env-guard/renamed-h
+  #:validate/post (require-known 'env: 'env:OMP_NUM_THREADS
+                                 #:renamed (hasheq 'env:OMP_THREADS 'env:OMP_NUM_THREADS)))
+(check-not-false (findf (lambda (i) (equal? (issue-message i) "env:OMP_THREADS 已更名为 env:OMP_NUM_THREADS"))
+                        (resolved-issues (resolve (config old-names env-guard/renamed-h)))))
+
 ;; ---------------------------------------------------------------------------
 ;; In .config files: combinators available inside the sandbox, no lambda
 

@@ -141,7 +141,8 @@ is one call away:
 The sweep matches by prefix, so the misspelled `env:OMP_NUM_THREAD` was
 used in earnest too. Declare a whitelist guard and compose it in parallel
 with any config; unsupported members go into the warnings (`require-known`
-is the error-severity twin):
+is the error-severity twin); renamed or removed members registered with
+`#:renamed` fail by name with the new name or a note:
 
 ```racket
 (define-config env-guard

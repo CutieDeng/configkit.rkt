@@ -160,26 +160,45 @@
 ;; Sweeps the enumerable fields matching pattern; members outside the
 ;; supported roster are flagged one by one, with a did-you-mean hint
 ;; against the roster.
-(define (family-verdicts cfg pattern allowed on-unknown)
+;;
+;; renamed: retired members, old name → new name (symbol) or a removal note
+;; (string). A retired member is not an "unsupported" warning but a named
+;; failure with the way out: an old name can still be introduced by a bare
+;; () row and then read by nobody, and silently having no effect is worse
+;; than an error. Retired members are checked whatever the pattern.
+(define (family-verdicts cfg pattern allowed on-unknown #:renamed [renamed '()])
   (define match? (field-matcher pattern))
+  (define retired (if (hash? renamed) renamed (make-immutable-hasheq renamed)))
   (for/fold ([acc '()] #:result (if (null? acc) #t (reverse acc)))
             ([f (in-list (config-source-keys cfg))])
-    (if (and (match? f) (not (memq f allowed)))
-        (cons (on-unknown f) acc)
-        acc)))
+    (cond
+      [(hash-ref retired f #f) => (lambda (to) (cons (retired-verdict f to) acc))]
+      [(and (match? f) (not (memq f allowed))) (cons (on-unknown f) acc)]
+      [else acc])))
 
-(define (require-known pattern . allowed)
+(define (retired-verdict f to)
+  (if (symbol? to)
+      (fail #:reason (format "~a 已更名为 ~a" f to)
+            #:given f
+            #:hint (format "改写为 [~a ...]" to)
+            #:field f)
+      (fail #:reason (format "~a 已移除" f)
+            #:given f
+            #:hint (format "~a" to)
+            #:field f)))
+
+(define (require-known pattern #:renamed [renamed '()] . allowed)
   (lambda (cfg)
-    (family-verdicts cfg pattern allowed
+    (family-verdicts cfg pattern allowed #:renamed renamed
                      (lambda (f)
                        (fail #:reason "族内出现不支持的字段"
                              #:expected allowed
                              #:given f
                              #:hint (enum-hint f allowed))))))
 
-(define (warn-unknown pattern . allowed)
+(define (warn-unknown pattern #:renamed [renamed '()] . allowed)
   (lambda (cfg)
-    (family-verdicts cfg pattern allowed
+    (family-verdicts cfg pattern allowed #:renamed renamed
                      (lambda (f)
                        (define h (enum-hint f allowed))
                        (warn #:reason (format "族内字段 ~a 不受支持~a" f

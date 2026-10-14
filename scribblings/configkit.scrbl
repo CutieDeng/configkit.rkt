@@ -163,15 +163,20 @@
               @defproc[(require-filled [field symbol?] ...) procedure?]
               @defproc[(warn-unfilled [field symbol?] ...) procedure?]
               @defproc[(require-known [pattern (or/c symbol? string? regexp?)]
+                                      [#:renamed renamed (or/c hash? (listof pair?)) '()]
                                       [member symbol?] ...) procedure?]
               @defproc[(warn-unknown [pattern (or/c symbol? string? regexp?)]
+                                     [#:renamed renamed (or/c hash? (listof pair?)) '()]
                                      [member symbol?] ...) procedure?])]{
 常用检查，富裁决内建（@racket[one-of] 含 did-you-mean 与类型不符提示）。
 后四个为后验组合子（收已解析视图）：filled 对查"该有的有没有"（无初始
 化值快检）；known 对查反方向"有的是不是都认识"——扫掠名字匹配
 @racket[pattern]（前缀或 regexp，同 @racket[config-source-ref-group]）的
 可枚举字段，不在 @racket[member] 白名单中的逐个 fail/warn，附对白名单的
-did-you-mean 提示。准则：@bold{建议缺省用警告版}（@racket[warn-unknown]/
+did-you-mean 提示。@racket[renamed] 登记退役成员：旧名 → 新名（符号）或移除说明
+（字符串）；配置里出现退役成员时两个版本都点名报错并给出路（更名的给新名，移除的
+给说明），不当作"不受支持"——裸 @racket[()] 能合法引入旧名而无人读，静默不生效比
+报错更糟。准则：@bold{建议缺省用警告版}（@racket[warn-unknown]/
 @racket[warn-unfilled]），require 版留给自觉收紧的场合。
 全部注入 @filepath{.config} 沙箱，配置文件中免写 lambda。}
 
