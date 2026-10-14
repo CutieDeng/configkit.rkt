@@ -89,7 +89,8 @@ references allow no `..` and no absolute paths; containment checking is
 two-stage (lexical normalization, then per-component symlink resolution —
 both must stay inside the equally-resolved root). `#:extends` takes exactly
 two forms: a downward relative path, or `@head/endpoint` (a head maps to a
-directory or to a registry namespace); bare registry symbols are
+directory or to a registry namespace); a file reference may include or omit
+the `.config` suffix (`"base"` and `"base.config"` are the same); bare registry symbols are
 host-API-only and forbidden in `.config`. The head table and the registry
 are **not configuration data** (no self-privilege-escalation): the loader
 holds them, the host registers them, downstream configs can use but never

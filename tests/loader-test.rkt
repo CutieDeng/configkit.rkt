@@ -55,6 +55,13 @@ EOF
 EOF
   )
 
+(write-config! (build-path root "jobs" "with-child-ext.config")
+  #<<EOF
+#:extends "sub/child.config"
+[label () "with-child-ext"]
+EOF
+  )
+
 (write-config! (build-path root "jobs" "evil.config")
   #<<EOF
 #:extends "../site/template"
@@ -104,6 +111,11 @@ EOF
   (define bad (resolve (config nightly (hash 'copies 128))))
   (check-true (for/or ([i (in-list (resolved-issues bad))])
                 (eq? (issue-kind i) 'unification-conflict))) ; 128 vs 4 先冲突
+
+  ;; 引用带 .config 后缀与不带同义（此前会解析成 child.config.config）
+  (check-equal? (resolved-value (resolve (load-config "@jobs/with-child-ext")) 'iterations) 3)
+  (check-equal? (resolved-value (resolve (load-config "@jobs/with-child-ext.config")) 'label)
+                "with-child-ext")
 
   ;; Downward reference from a file's own directory.
   (define with-child (load-config "@jobs/with-child"))

@@ -77,10 +77,12 @@
   ;; Two-stage containment: the path itself (lexical), then the
   ;; filesystem-resolved path (symlinks followed) — both must stay inside
   ;; the (equally resolved) root.
+  ;; 引用可写可不写 .config 后缀："base" 与 "base.config" 指同一个文件
+  (define leaf (if (string-suffix? (last parts) config-extension)
+                   (last parts)
+                   (string-append (last parts) config-extension)))
   (define joined
-    (apply build-path root (append (drop-right parts 1)
-                                   (list (string-append (last parts)
-                                                        config-extension)))))
+    (apply build-path root (append (drop-right parts 1) (list leaf))))
   (define simplified (simplify-path (path->complete-path joined) #f))
   (define root* (simplify-path (path->complete-path root) #f))
   (unless (under-root? root* simplified)
